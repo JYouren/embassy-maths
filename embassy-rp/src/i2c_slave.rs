@@ -5,9 +5,9 @@ use core::task::Poll;
 
 use pac::i2c;
 
-use crate::i2c::{AbortReason, FIFO_SIZE, Instance, InterruptHandler, SclPin, SdaPin, set_up_i2c_pin};
+use crate::i2c::{set_up_i2c_pin, AbortReason, Instance, InterruptHandler, SclPin, SdaPin, FIFO_SIZE};
 use crate::interrupt::typelevel::{Binding, Interrupt};
-use crate::{Peri, pac};
+use crate::{pac, Peri};
 
 /// I2C error
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -52,7 +52,7 @@ pub enum ReadStatus {
     Done,
     /// Transaction Incomplete, controller trying to read more bytes than were provided
     NeedMoreBytes,
-    /// Transaction Complete, but controller stopped reading bytes before we ran out
+    /// Transaction Complere, but controller stopped reading bytes before we ran out
     LeftoverBytes(u16),
 }
 
@@ -65,16 +65,6 @@ pub struct Config {
     pub addr: u16,
     /// Control if the peripheral should ack to and report general calls.
     pub general_call: bool,
-    /// Enable internal pullup on SDA.
-    ///
-    /// Using external pullup resistors is recommended for I2C. If you do
-    /// have external pullups you should not enable this.
-    pub sda_pullup: bool,
-    /// Enable internal pullup on SCL.
-    ///
-    /// Using external pullup resistors is recommended for I2C. If you do
-    /// have external pullups you should not enable this.
-    pub scl_pullup: bool,
 }
 
 impl Default for Config {
@@ -82,8 +72,6 @@ impl Default for Config {
         Self {
             addr: 0x55,
             general_call: true,
-            sda_pullup: true,
-            scl_pullup: true,
         }
     }
 }
@@ -107,8 +95,8 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
         assert!(config.addr != 0);
 
         // Configure SCL & SDA pins
-        set_up_i2c_pin(&scl, config.scl_pullup);
-        set_up_i2c_pin(&sda, config.sda_pullup);
+        set_up_i2c_pin(&scl);
+        set_up_i2c_pin(&sda);
 
         let mut ret = Self {
             phantom: PhantomData,
@@ -240,7 +228,7 @@ impl<'d, T: Instance> I2cSlave<'d, T> {
 
                 if p.ic_rxflr().read().rxflr() > 0 || me.pending_byte.is_some() {
                     me.drain_fifo(buffer, &mut len);
-                    // we're receiving data, set rx fifo watermark to 12 bytes (3/4 full) to reduce interrupt noise
+                    // we're recieving data, set rx fifo watermark to 12 bytes (3/4 full) to reduce interrupt noise
                     p.ic_rx_tl().write(|w| w.set_rx_tl(11));
                 }
 

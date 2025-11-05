@@ -1,6 +1,6 @@
-use embassy_futures::select::{Either4, select4};
+use embassy_futures::select::{select4, Either4};
 use embassy_net_driver_channel as ch;
-use embassy_time::{Duration, Timer, block_for};
+use embassy_time::{block_for, Duration, Timer};
 use embedded_hal_1::digital::OutputPin;
 
 use crate::bus::Bus;
@@ -12,7 +12,7 @@ use crate::ioctl::{IoctlState, IoctlType, PendingIoctl};
 use crate::nvram::NVRAM;
 use crate::structs::*;
 use crate::util::slice8_mut;
-use crate::{CHIP, Core, MTU, events};
+use crate::{events, Core, CHIP, MTU};
 
 #[cfg(feature = "firmware-logs")]
 struct LogState {

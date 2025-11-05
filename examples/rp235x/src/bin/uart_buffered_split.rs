@@ -33,7 +33,7 @@ async fn main(spawner: Spawner) {
     let uart = BufferedUart::new(uart, tx_pin, rx_pin, Irqs, tx_buf, rx_buf, Config::default());
     let (mut tx, rx) = uart.split();
 
-    spawner.spawn(unwrap!(reader(rx)));
+    unwrap!(spawner.spawn(reader(rx)));
 
     info!("Writing...");
     loop {

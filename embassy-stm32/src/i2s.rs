@@ -3,12 +3,12 @@
 use embassy_futures::join::join;
 use stm32_metapac::spi::vals;
 
-use crate::Peri;
-use crate::dma::{ChannelAndRequest, ReadableRingBuffer, TransferOptions, WritableRingBuffer, ringbuffer};
+use crate::dma::{ringbuffer, ChannelAndRequest, ReadableRingBuffer, TransferOptions, WritableRingBuffer};
 use crate::gpio::{AfType, AnyPin, OutputType, SealedPin, Speed};
 use crate::mode::Async;
 use crate::spi::{Config as SpiConfig, RegsExt as _, *};
 use crate::time::Hertz;
+use crate::Peri;
 
 /// I2S mode
 #[derive(Copy, Clone)]
@@ -27,8 +27,7 @@ enum Function {
     Transmit,
     /// Receive audio data
     Receive,
-    #[cfg(any(spi_v4, spi_v5))]
-
+    #[cfg(spi_v3)]
     /// Transmit and Receive audio data
     FullDuplex,
 }
@@ -73,6 +72,7 @@ impl From<ringbuffer::Error> for Error {
 }
 
 impl Standard {
+    #[cfg(any(spi_v1, spi_v3, spi_f1))]
     const fn i2sstd(&self) -> vals::I2sstd {
         match self {
             Standard::Philips => vals::I2sstd::PHILIPS,
@@ -83,6 +83,7 @@ impl Standard {
         }
     }
 
+    #[cfg(any(spi_v1, spi_v3, spi_f1))]
     const fn pcmsync(&self) -> vals::Pcmsync {
         match self {
             Standard::PcmLongSync => vals::Pcmsync::LONG,
@@ -105,6 +106,7 @@ pub enum Format {
 }
 
 impl Format {
+    #[cfg(any(spi_v1, spi_v3, spi_f1))]
     const fn datlen(&self) -> vals::Datlen {
         match self {
             Format::Data16Channel16 => vals::Datlen::BITS16,
@@ -114,6 +116,7 @@ impl Format {
         }
     }
 
+    #[cfg(any(spi_v1, spi_v3, spi_f1))]
     const fn chlen(&self) -> vals::Chlen {
         match self {
             Format::Data16Channel16 => vals::Chlen::BITS16,
@@ -134,6 +137,7 @@ pub enum ClockPolarity {
 }
 
 impl ClockPolarity {
+    #[cfg(any(spi_v1, spi_v3, spi_f1))]
     const fn ckpol(&self) -> vals::Ckpol {
         match self {
             ClockPolarity::IdleHigh => vals::Ckpol::IDLE_HIGH,
@@ -151,10 +155,6 @@ impl ClockPolarity {
 #[non_exhaustive]
 #[derive(Copy, Clone)]
 pub struct Config {
-    /// Frequency
-    pub frequency: Hertz,
-    /// GPIO Speed
-    pub gpio_speed: Speed,
     /// Mode
     pub mode: Mode,
     /// Which I2S standard to use.
@@ -170,8 +170,6 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            frequency: Hertz::khz(48),
-            gpio_speed: Speed::VeryHigh,
             mode: Mode::Master,
             standard: Standard::Philips,
             format: Format::Data16Channel16,
@@ -237,14 +235,15 @@ pub struct I2S<'d, W: Word> {
 
 impl<'d, W: Word> I2S<'d, W> {
     /// Create a transmitter driver.
-    pub fn new_txonly<T: Instance, #[cfg(afio)] A>(
+    pub fn new_txonly<T: Instance>(
         peri: Peri<'d, T>,
-        sd: Peri<'d, if_afio!(impl MosiPin<T, A>)>,
-        ws: Peri<'d, if_afio!(impl WsPin<T, A>)>,
-        ck: Peri<'d, if_afio!(impl CkPin<T, A>)>,
-        mck: Peri<'d, if_afio!(impl MckPin<T, A>)>,
+        sd: Peri<'d, impl MosiPin<T>>,
+        ws: Peri<'d, impl WsPin<T>>,
+        ck: Peri<'d, impl CkPin<T>>,
+        mck: Peri<'d, impl MckPin<T>>,
         txdma: Peri<'d, impl TxDma<T>>,
         txdma_buf: &'d mut [W],
+        freq: Hertz,
         config: Config,
     ) -> Self {
         Self::new_inner(
@@ -256,19 +255,21 @@ impl<'d, W: Word> I2S<'d, W> {
             new_pin!(mck, AfType::output(OutputType::PushPull, Speed::VeryHigh)),
             new_dma!(txdma).map(|d| (d, txdma_buf)),
             None,
+            freq,
             config,
             Function::Transmit,
         )
     }
 
     /// Create a transmitter driver without a master clock pin.
-    pub fn new_txonly_nomck<T: Instance, #[cfg(afio)] A>(
+    pub fn new_txonly_nomck<T: Instance>(
         peri: Peri<'d, T>,
-        sd: Peri<'d, if_afio!(impl MosiPin<T, A>)>,
-        ws: Peri<'d, if_afio!(impl WsPin<T, A>)>,
-        ck: Peri<'d, if_afio!(impl CkPin<T, A>)>,
+        sd: Peri<'d, impl MosiPin<T>>,
+        ws: Peri<'d, impl WsPin<T>>,
+        ck: Peri<'d, impl CkPin<T>>,
         txdma: Peri<'d, impl TxDma<T>>,
         txdma_buf: &'d mut [W],
+        freq: Hertz,
         config: Config,
     ) -> Self {
         Self::new_inner(
@@ -280,20 +281,22 @@ impl<'d, W: Word> I2S<'d, W> {
             None,
             new_dma!(txdma).map(|d| (d, txdma_buf)),
             None,
+            freq,
             config,
             Function::Transmit,
         )
     }
 
     /// Create a receiver driver.
-    pub fn new_rxonly<T: Instance, #[cfg(afio)] A>(
+    pub fn new_rxonly<T: Instance>(
         peri: Peri<'d, T>,
-        sd: Peri<'d, if_afio!(impl MisoPin<T, A>)>,
-        ws: Peri<'d, if_afio!(impl WsPin<T, A>)>,
-        ck: Peri<'d, if_afio!(impl CkPin<T, A>)>,
-        mck: Peri<'d, if_afio!(impl MckPin<T, A>)>,
+        sd: Peri<'d, impl MisoPin<T>>,
+        ws: Peri<'d, impl WsPin<T>>,
+        ck: Peri<'d, impl CkPin<T>>,
+        mck: Peri<'d, impl MckPin<T>>,
         rxdma: Peri<'d, impl RxDma<T>>,
         rxdma_buf: &'d mut [W],
+        freq: Hertz,
         config: Config,
     ) -> Self {
         Self::new_inner(
@@ -305,25 +308,26 @@ impl<'d, W: Word> I2S<'d, W> {
             new_pin!(mck, AfType::output(OutputType::PushPull, Speed::VeryHigh)),
             None,
             new_dma!(rxdma).map(|d| (d, rxdma_buf)),
+            freq,
             config,
             Function::Receive,
         )
     }
 
-    #[cfg(any(spi_v4, spi_v5))]
-
+    #[cfg(spi_v3)]
     /// Create a full duplex driver.
-    pub fn new_full_duplex<T: Instance, #[cfg(afio)] A>(
+    pub fn new_full_duplex<T: Instance>(
         peri: Peri<'d, T>,
-        txsd: Peri<'d, if_afio!(impl MosiPin<T, A>)>,
-        rxsd: Peri<'d, if_afio!(impl MisoPin<T, A>)>,
-        ws: Peri<'d, if_afio!(impl WsPin<T, A>)>,
-        ck: Peri<'d, if_afio!(impl CkPin<T, A>)>,
-        mck: Peri<'d, if_afio!(impl MckPin<T, A>)>,
+        txsd: Peri<'d, impl MosiPin<T>>,
+        rxsd: Peri<'d, impl MisoPin<T>>,
+        ws: Peri<'d, impl WsPin<T>>,
+        ck: Peri<'d, impl CkPin<T>>,
+        mck: Peri<'d, impl MckPin<T>>,
         txdma: Peri<'d, impl TxDma<T>>,
         txdma_buf: &'d mut [W],
         rxdma: Peri<'d, impl RxDma<T>>,
         rxdma_buf: &'d mut [W],
+        freq: Hertz,
         config: Config,
     ) -> Self {
         Self::new_inner(
@@ -335,6 +339,7 @@ impl<'d, W: Word> I2S<'d, W> {
             new_pin!(mck, AfType::output(OutputType::PushPull, Speed::VeryHigh)),
             new_dma!(txdma).map(|d| (d, txdma_buf)),
             new_dma!(rxdma).map(|d| (d, rxdma_buf)),
+            freq,
             config,
             Function::FullDuplex,
         )
@@ -354,7 +359,7 @@ impl<'d, W: Word> I2S<'d, W> {
         if let Some(rx_ring_buffer) = &mut self.rx_ring_buffer {
             rx_ring_buffer.start();
             // SPIv3 clears rxfifo on SPE=0
-            #[cfg(not(any(spi_v4, spi_v5, spi_v6)))]
+            #[cfg(not(any(spi_v3, spi_v4, spi_v5)))]
             flush_rx_fifo(self.spi.info.regs);
 
             set_rxdmaen(self.spi.info.regs, true);
@@ -362,7 +367,7 @@ impl<'d, W: Word> I2S<'d, W> {
         self.spi.info.regs.cr1().modify(|w| {
             w.set_spe(true);
         });
-        #[cfg(any(spi_v4, spi_v5, spi_v6))]
+        #[cfg(any(spi_v3, spi_v4, spi_v5))]
         self.spi.info.regs.cr1().modify(|w| {
             w.set_cstart(true);
         });
@@ -401,7 +406,7 @@ impl<'d, W: Word> I2S<'d, W> {
 
         join(rx_f, tx_f).await;
 
-        #[cfg(any(spi_v4, spi_v5, spi_v6))]
+        #[cfg(any(spi_v3, spi_v4, spi_v5))]
         {
             if let Mode::Master = self.mode {
                 regs.cr1().modify(|w| {
@@ -459,25 +464,26 @@ impl<'d, W: Word> I2S<'d, W> {
         }
     }
 
-    fn new_inner<T: Instance, #[cfg(afio)] A>(
+    fn new_inner<T: Instance>(
         peri: Peri<'d, T>,
         txsd: Option<Peri<'d, AnyPin>>,
         rxsd: Option<Peri<'d, AnyPin>>,
-        ws: Peri<'d, if_afio!(impl WsPin<T, A>)>,
-        ck: Peri<'d, if_afio!(impl CkPin<T, A>)>,
+        ws: Peri<'d, impl WsPin<T>>,
+        ck: Peri<'d, impl CkPin<T>>,
         mck: Option<Peri<'d, AnyPin>>,
         txdma: Option<(ChannelAndRequest<'d>, &'d mut [W])>,
         rxdma: Option<(ChannelAndRequest<'d>, &'d mut [W])>,
+        freq: Hertz,
         config: Config,
         function: Function,
     ) -> Self {
-        set_as_af!(ws, AfType::output(OutputType::PushPull, config.gpio_speed));
-        set_as_af!(ck, AfType::output(OutputType::PushPull, config.gpio_speed));
+        ws.set_as_af(ws.af_num(), AfType::output(OutputType::PushPull, Speed::VeryHigh));
+        ck.set_as_af(ck.af_num(), AfType::output(OutputType::PushPull, Speed::VeryHigh));
 
         let spi = Spi::new_internal(peri, None, None, {
-            let mut spi_config = SpiConfig::default();
-            spi_config.frequency = config.frequency;
-            spi_config
+            let mut config = SpiConfig::default();
+            config.frequency = freq;
+            config
         });
 
         let regs = T::info().regs;
@@ -487,100 +493,105 @@ impl<'d, W: Word> I2S<'d, W> {
         #[cfg(not(all(rcc_f4, not(stm32f410))))]
         let pclk = T::frequency();
 
-        let (odd, div) = compute_baud_rate(pclk, config.frequency, config.master_clock, config.format);
+        let (odd, div) = compute_baud_rate(pclk, freq, config.master_clock, config.format);
 
-        #[cfg(any(spi_v4, spi_v5))]
+        #[cfg(any(spi_v1, spi_v3, spi_f1))]
         {
-            regs.cr1().modify(|w| w.set_spe(false));
-
-            reset_incompatible_bitfields::<T>();
-        }
-
-        use stm32_metapac::spi::vals::{I2scfg, Odd};
-
-        // 1. Select the I2SDIV[7:0] bits in the SPI_I2SPR/SPI_I2SCFGR register to define the serial clock baud
-        // rate to reach the proper audio sample frequency. The ODD bit in the
-        // SPI_I2SPR/SPI_I2SCFGR register also has to be defined.
-
-        // 2. Select the CKPOL bit to define the steady level for the communication clock. Set the
-        // MCKOE bit in the SPI_I2SPR/SPI_I2SCFGR register if the master clock MCK needs to be provided to
-        // the external DAC/ADC audio component (the I2SDIV and ODD values should be
-        // computed depending on the state of the MCK output, for more details refer to
-        // Section 28.4.4: Clock generator).
-
-        // 3. Set the I2SMOD bit in SPI_I2SCFGR to activate the I2S functionalities and choose the
-        // I2S standard through the I2SSTD[1:0] and PCMSYNC bits, the data length through the
-        // DATLEN[1:0] bits and the number of bits per channel by configuring the CHLEN bit.
-        // Select also the I2S master mode and direction (Transmitter or Receiver) through the
-        // I2SCFG[1:0] bits in the SPI_I2SCFGR register.
-
-        // 4. If needed, select all the potential interruption sources and the DMA capabilities by
-        // writing the SPI_CR2 register.
-
-        // 5. The I2SE bit in SPI_I2SCFGR register must be set.
-
-        let clk_reg = {
-            #[cfg(any(spi_v1, spi_v2, spi_v3))]
+            #[cfg(spi_v3)]
             {
-                regs.i2spr()
-            }
-            #[cfg(any(spi_v4, spi_v5))]
-            {
-                regs.i2scfgr()
-            }
-        };
+                regs.cr1().modify(|w| w.set_spe(false));
 
-        clk_reg.modify(|w| {
-            w.set_i2sdiv(div);
-            w.set_odd(match odd {
-                true => Odd::ODD,
-                false => Odd::EVEN,
+                reset_incompatible_bitfields::<T>();
+            }
+
+            use stm32_metapac::spi::vals::{I2scfg, Odd};
+
+            // 1. Select the I2SDIV[7:0] bits in the SPI_I2SPR/SPI_I2SCFGR register to define the serial clock baud
+            // rate to reach the proper audio sample frequency. The ODD bit in the
+            // SPI_I2SPR/SPI_I2SCFGR register also has to be defined.
+
+            // 2. Select the CKPOL bit to define the steady level for the communication clock. Set the
+            // MCKOE bit in the SPI_I2SPR/SPI_I2SCFGR register if the master clock MCK needs to be provided to
+            // the external DAC/ADC audio component (the I2SDIV and ODD values should be
+            // computed depending on the state of the MCK output, for more details refer to
+            // Section 28.4.4: Clock generator).
+
+            // 3. Set the I2SMOD bit in SPI_I2SCFGR to activate the I2S functionalities and choose the
+            // I2S standard through the I2SSTD[1:0] and PCMSYNC bits, the data length through the
+            // DATLEN[1:0] bits and the number of bits per channel by configuring the CHLEN bit.
+            // Select also the I2S master mode and direction (Transmitter or Receiver) through the
+            // I2SCFG[1:0] bits in the SPI_I2SCFGR register.
+
+            // 4. If needed, select all the potential interruption sources and the DMA capabilities by
+            // writing the SPI_CR2 register.
+
+            // 5. The I2SE bit in SPI_I2SCFGR register must be set.
+
+            let clk_reg = {
+                #[cfg(any(spi_v1, spi_f1))]
+                {
+                    regs.i2spr()
+                }
+                #[cfg(spi_v3)]
+                {
+                    regs.i2scfgr()
+                }
+            };
+
+            clk_reg.modify(|w| {
+                w.set_i2sdiv(div);
+                w.set_odd(match odd {
+                    true => Odd::ODD,
+                    false => Odd::EVEN,
+                });
+
+                w.set_mckoe(config.master_clock);
             });
 
-            w.set_mckoe(config.master_clock);
-        });
+            regs.i2scfgr().modify(|w| {
+                w.set_ckpol(config.clock_polarity.ckpol());
 
-        regs.i2scfgr().modify(|w| {
-            w.set_ckpol(config.clock_polarity.ckpol());
+                w.set_i2smod(true);
 
-            w.set_i2smod(true);
+                w.set_i2sstd(config.standard.i2sstd());
+                w.set_pcmsync(config.standard.pcmsync());
 
-            w.set_i2sstd(config.standard.i2sstd());
-            w.set_pcmsync(config.standard.pcmsync());
+                w.set_datlen(config.format.datlen());
+                w.set_chlen(config.format.chlen());
 
-            w.set_datlen(config.format.datlen());
-            w.set_chlen(config.format.chlen());
+                w.set_i2scfg(match (config.mode, function) {
+                    (Mode::Master, Function::Transmit) => I2scfg::MASTER_TX,
+                    (Mode::Master, Function::Receive) => I2scfg::MASTER_RX,
+                    #[cfg(spi_v3)]
+                    (Mode::Master, Function::FullDuplex) => I2scfg::MASTER_FULL_DUPLEX,
+                    (Mode::Slave, Function::Transmit) => I2scfg::SLAVE_TX,
+                    (Mode::Slave, Function::Receive) => I2scfg::SLAVE_RX,
+                    #[cfg(spi_v3)]
+                    (Mode::Slave, Function::FullDuplex) => I2scfg::SLAVE_FULL_DUPLEX,
+                });
 
-            w.set_i2scfg(match (config.mode, function) {
-                (Mode::Master, Function::Transmit) => I2scfg::MASTER_TX,
-                (Mode::Master, Function::Receive) => I2scfg::MASTER_RX,
-                #[cfg(any(spi_v4, spi_v5))]
-                (Mode::Master, Function::FullDuplex) => I2scfg::MASTER_FULL_DUPLEX,
-                (Mode::Slave, Function::Transmit) => I2scfg::SLAVE_TX,
-                (Mode::Slave, Function::Receive) => I2scfg::SLAVE_RX,
-                #[cfg(any(spi_v4, spi_v5))]
-                (Mode::Slave, Function::FullDuplex) => I2scfg::SLAVE_FULL_DUPLEX,
+                #[cfg(any(spi_v1, spi_f1))]
+                w.set_i2se(true);
             });
 
-            #[cfg(any(spi_v1, spi_v2, spi_v3))]
-            w.set_i2se(true);
-        });
+            let mut opts = TransferOptions::default();
+            opts.half_transfer_ir = true;
 
-        let mut opts = TransferOptions::default();
-        opts.half_transfer_ir = true;
-
-        Self {
-            mode: config.mode,
-            spi,
-            txsd: txsd.map(|w| w.into()),
-            rxsd: rxsd.map(|w| w.into()),
-            ws: Some(ws.into()),
-            ck: Some(ck.into()),
-            mck: mck.map(|w| w.into()),
-            tx_ring_buffer: txdma
-                .map(|(ch, buf)| unsafe { WritableRingBuffer::new(ch.channel, ch.request, regs.tx_ptr(), buf, opts) }),
-            rx_ring_buffer: rxdma
-                .map(|(ch, buf)| unsafe { ReadableRingBuffer::new(ch.channel, ch.request, regs.rx_ptr(), buf, opts) }),
+            Self {
+                mode: config.mode,
+                spi,
+                txsd: txsd.map(|w| w.into()),
+                rxsd: rxsd.map(|w| w.into()),
+                ws: Some(ws.into()),
+                ck: Some(ck.into()),
+                mck: mck.map(|w| w.into()),
+                tx_ring_buffer: txdma.map(|(ch, buf)| unsafe {
+                    WritableRingBuffer::new(ch.channel, ch.request, regs.tx_ptr(), buf, opts)
+                }),
+                rx_ring_buffer: rxdma.map(|(ch, buf)| unsafe {
+                    ReadableRingBuffer::new(ch.channel, ch.request, regs.rx_ptr(), buf, opts)
+                }),
+            }
         }
     }
 }
@@ -631,8 +642,7 @@ fn compute_baud_rate(i2s_clock: Hertz, request_freq: Hertz, mclk: bool, data_for
     }
 }
 
-#[cfg(any(spi_v4, spi_v5))]
-
+#[cfg(spi_v3)]
 // The STM32H7 reference manual specifies that any incompatible bitfields should be reset
 // to their reset values while operating in I2S mode.
 fn reset_incompatible_bitfields<T: Instance>() {

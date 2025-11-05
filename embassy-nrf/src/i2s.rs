@@ -6,7 +6,7 @@ use core::future::poll_fn;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, AtomicBool, Ordering};
 use core::task::Poll;
 
 use embassy_hal_internal::drop::OnDrop;
@@ -17,7 +17,7 @@ use crate::gpio::{AnyPin, Pin as GpioPin, PselBits};
 use crate::interrupt::typelevel::Interrupt;
 use crate::pac::i2s::vals;
 use crate::util::slice_in_ram_or;
-use crate::{EASY_DMA_SIZE, interrupt, pac};
+use crate::{interrupt, pac, EASY_DMA_SIZE};
 
 /// Type alias for `MultiBuffering` with 2 buffers.
 pub type DoubleBuffering<S, const NS: usize> = MultiBuffering<S, 2, NS>;
@@ -252,7 +252,7 @@ impl ApproxSampleRate {
 ///
 /// Those are non standard sample rates that can be configured without error.
 ///
-/// For custom master clock configuration, please refer to [vals::Mode].
+/// For custom master clock configuration, please refer to [Mode].
 #[derive(Clone, Copy)]
 pub enum ExactSampleRate {
     /// 8000 Hz
@@ -381,7 +381,7 @@ pub struct InterruptHandler<T: Instance> {
 
 impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandler<T> {
     unsafe fn on_interrupt() {
-        let device = Device::new(T::regs());
+        let device = Device::<T>::new();
         let s = T::state();
 
         if device.is_tx_ptr_updated() {
@@ -405,9 +405,8 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
 }
 
 /// I2S driver.
-pub struct I2S<'d> {
-    r: pac::i2s::I2s,
-    state: &'static State,
+pub struct I2S<'d, T: Instance> {
+    i2s: Peri<'d, T>,
     mck: Option<Peri<'d, AnyPin>>,
     sck: Peri<'d, AnyPin>,
     lrck: Peri<'d, AnyPin>,
@@ -417,10 +416,10 @@ pub struct I2S<'d> {
     config: Config,
 }
 
-impl<'d> I2S<'d> {
+impl<'d, T: Instance> I2S<'d, T> {
     /// Create a new I2S in master mode
-    pub fn new_master<T: Instance>(
-        _i2s: Peri<'d, T>,
+    pub fn new_master(
+        i2s: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         mck: Peri<'d, impl GpioPin>,
         sck: Peri<'d, impl GpioPin>,
@@ -428,12 +427,8 @@ impl<'d> I2S<'d> {
         master_clock: MasterClock,
         config: Config,
     ) -> Self {
-        T::Interrupt::unpend();
-        unsafe { T::Interrupt::enable() };
-
         Self {
-            r: T::regs(),
-            state: T::state(),
+            i2s,
             mck: Some(mck.into()),
             sck: sck.into(),
             lrck: lrck.into(),
@@ -445,19 +440,15 @@ impl<'d> I2S<'d> {
     }
 
     /// Create a new I2S in slave mode
-    pub fn new_slave<T: Instance>(
-        _i2s: Peri<'d, T>,
+    pub fn new_slave(
+        i2s: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         sck: Peri<'d, impl GpioPin>,
         lrck: Peri<'d, impl GpioPin>,
         config: Config,
     ) -> Self {
-        T::Interrupt::unpend();
-        unsafe { T::Interrupt::enable() };
-
         Self {
-            r: T::regs(),
-            state: T::state(),
+            i2s,
             mck: None,
             sck: sck.into(),
             lrck: lrck.into(),
@@ -473,13 +464,10 @@ impl<'d> I2S<'d> {
         mut self,
         sdout: Peri<'d, impl GpioPin>,
         buffers: MultiBuffering<S, NB, NS>,
-    ) -> OutputStream<'d, S, NB, NS> {
+    ) -> OutputStream<'d, T, S, NB, NS> {
         self.sdout = Some(sdout.into());
-        let p = self.build();
         OutputStream {
-            r: p.0,
-            state: p.1,
-            _phantom: PhantomData,
+            _p: self.build(),
             buffers,
         }
     }
@@ -489,14 +477,11 @@ impl<'d> I2S<'d> {
         mut self,
         sdin: Peri<'d, impl GpioPin>,
         buffers: MultiBuffering<S, NB, NS>,
-    ) -> InputStream<'d, S, NB, NS> {
+    ) -> InputStream<'d, T, S, NB, NS> {
         self.sdin = Some(sdin.into());
-        let p = self.build();
         InputStream {
-            r: p.0,
-            state: p.1,
+            _p: self.build(),
             buffers,
-            _phantom: PhantomData,
         }
     }
 
@@ -507,33 +492,30 @@ impl<'d> I2S<'d> {
         sdout: Peri<'d, impl GpioPin>,
         buffers_out: MultiBuffering<S, NB, NS>,
         buffers_in: MultiBuffering<S, NB, NS>,
-    ) -> FullDuplexStream<'d, S, NB, NS> {
+    ) -> FullDuplexStream<'d, T, S, NB, NS> {
         self.sdout = Some(sdout.into());
         self.sdin = Some(sdin.into());
-        let p = self.build();
 
         FullDuplexStream {
-            r: p.0,
-            state: p.1,
-            _phantom: PhantomData,
+            _p: self.build(),
             buffers_out,
             buffers_in,
         }
     }
 
-    fn build(self) -> (pac::i2s::I2s, &'static State) {
+    fn build(self) -> Peri<'d, T> {
         self.apply_config();
         self.select_pins();
         self.setup_interrupt();
 
-        let device = Device::new(self.r);
+        let device = Device::<T>::new();
         device.enable();
 
-        (self.r, self.state)
+        self.i2s
     }
 
     fn apply_config(&self) {
-        let c = self.r.config();
+        let c = T::regs().config();
         match &self.master_clock {
             Some(MasterClock { freq, ratio }) => {
                 c.mode().write(|w| w.set_mode(vals::Mode::MASTER));
@@ -553,7 +535,7 @@ impl<'d> I2S<'d> {
     }
 
     fn select_pins(&self) {
-        let psel = self.r.psel();
+        let psel = T::regs().psel();
         psel.mck().write_value(self.mck.psel_bits());
         psel.sck().write_value(self.sck.psel_bits());
         psel.lrck().write_value(self.lrck.psel_bits());
@@ -562,9 +544,10 @@ impl<'d> I2S<'d> {
     }
 
     fn setup_interrupt(&self) {
-        // Interrupt is already set up in constructor
+        T::Interrupt::unpend();
+        unsafe { T::Interrupt::enable() };
 
-        let device = Device::new(self.r);
+        let device = Device::<T>::new();
         device.disable_tx_ptr_interrupt();
         device.disable_rx_ptr_interrupt();
         device.disable_stopped_interrupt();
@@ -578,16 +561,16 @@ impl<'d> I2S<'d> {
         device.enable_stopped_interrupt();
     }
 
-    async fn stop(r: pac::i2s::I2s, state: &State) {
+    async fn stop() {
         compiler_fence(Ordering::SeqCst);
 
-        let device = Device::new(r);
+        let device = Device::<T>::new();
         device.stop();
 
-        state.started.store(false, Ordering::Relaxed);
+        T::state().started.store(false, Ordering::Relaxed);
 
         poll_fn(|cx| {
-            state.stop_waker.register(cx.waker());
+            T::state().stop_waker.register(cx.waker());
 
             if device.is_stopped() {
                 trace!("STOP: Ready");
@@ -603,7 +586,7 @@ impl<'d> I2S<'d> {
         device.disable();
     }
 
-    async fn send_from_ram<S>(r: pac::i2s::I2s, state: &State, buffer_ptr: *const [S]) -> Result<(), Error>
+    async fn send_from_ram<S>(buffer_ptr: *const [S]) -> Result<(), Error>
     where
         S: Sample,
     {
@@ -613,22 +596,22 @@ impl<'d> I2S<'d> {
 
         compiler_fence(Ordering::SeqCst);
 
-        let device = Device::new(r);
+        let device = Device::<T>::new();
 
         device.update_tx(buffer_ptr)?;
 
-        Self::wait_tx_ptr_update(r, state).await;
+        Self::wait_tx_ptr_update().await;
 
         compiler_fence(Ordering::SeqCst);
 
         Ok(())
     }
 
-    async fn wait_tx_ptr_update(r: pac::i2s::I2s, state: &State) {
+    async fn wait_tx_ptr_update() {
         let drop = OnDrop::new(move || {
             trace!("TX DROP: Stopping");
 
-            let device = Device::new(r);
+            let device = Device::<T>::new();
             device.disable_tx_ptr_interrupt();
             device.reset_tx_ptr_event();
             device.disable_tx();
@@ -640,9 +623,9 @@ impl<'d> I2S<'d> {
         });
 
         poll_fn(|cx| {
-            state.tx_waker.register(cx.waker());
+            T::state().tx_waker.register(cx.waker());
 
-            let device = Device::new(r);
+            let device = Device::<T>::new();
             if device.is_tx_ptr_updated() {
                 trace!("TX POLL: Ready");
                 device.reset_tx_ptr_event();
@@ -658,7 +641,7 @@ impl<'d> I2S<'d> {
         drop.defuse();
     }
 
-    async fn receive_from_ram<S>(r: pac::i2s::I2s, state: &State, buffer_ptr: *mut [S]) -> Result<(), Error>
+    async fn receive_from_ram<S>(buffer_ptr: *mut [S]) -> Result<(), Error>
     where
         S: Sample,
     {
@@ -669,22 +652,22 @@ impl<'d> I2S<'d> {
 
         compiler_fence(Ordering::SeqCst);
 
-        let device = Device::new(r);
+        let device = Device::<T>::new();
 
         device.update_rx(buffer_ptr)?;
 
-        Self::wait_rx_ptr_update(r, state).await;
+        Self::wait_rx_ptr_update().await;
 
         compiler_fence(Ordering::SeqCst);
 
         Ok(())
     }
 
-    async fn wait_rx_ptr_update(r: pac::i2s::I2s, state: &State) {
+    async fn wait_rx_ptr_update() {
         let drop = OnDrop::new(move || {
             trace!("RX DROP: Stopping");
 
-            let device = Device::new(r);
+            let device = Device::<T>::new();
             device.disable_rx_ptr_interrupt();
             device.reset_rx_ptr_event();
             device.disable_rx();
@@ -696,9 +679,9 @@ impl<'d> I2S<'d> {
         });
 
         poll_fn(|cx| {
-            state.rx_waker.register(cx.waker());
+            T::state().rx_waker.register(cx.waker());
 
-            let device = Device::new(r);
+            let device = Device::<T>::new();
             if device.is_rx_ptr_updated() {
                 trace!("RX POLL: Ready");
                 device.reset_rx_ptr_event();
@@ -716,14 +699,12 @@ impl<'d> I2S<'d> {
 }
 
 /// I2S output
-pub struct OutputStream<'d, S: Sample, const NB: usize, const NS: usize> {
-    r: pac::i2s::I2s,
-    state: &'static State,
+pub struct OutputStream<'d, T: Instance, S: Sample, const NB: usize, const NS: usize> {
+    _p: Peri<'d, T>,
     buffers: MultiBuffering<S, NB, NS>,
-    _phantom: PhantomData<&'d ()>,
 }
 
-impl<'d, S: Sample, const NB: usize, const NS: usize> OutputStream<'d, S, NB, NS> {
+impl<'d, T: Instance, S: Sample, const NB: usize, const NS: usize> OutputStream<'d, T, S, NB, NS> {
     /// Get a mutable reference to the current buffer.
     pub fn buffer(&mut self) -> &mut [S] {
         self.buffers.get_mut()
@@ -734,9 +715,10 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> OutputStream<'d, S, NB, NS
     where
         S: Sample,
     {
-        let device = Device::new(self.r);
+        let device = Device::<T>::new();
 
-        if self.state.started.load(Ordering::Relaxed) {
+        let s = T::state();
+        if s.started.load(Ordering::Relaxed) {
             self.stop().await;
         }
 
@@ -745,11 +727,11 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> OutputStream<'d, S, NB, NS
 
         device.update_tx(self.buffers.switch())?;
 
-        self.state.started.store(true, Ordering::Relaxed);
+        s.started.store(true, Ordering::Relaxed);
 
         device.start();
 
-        I2S::wait_tx_ptr_update(self.r, self.state).await;
+        I2S::<T>::wait_tx_ptr_update().await;
 
         Ok(())
     }
@@ -757,7 +739,7 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> OutputStream<'d, S, NB, NS
     /// Stops the I2S transfer and waits until it has stopped.
     #[inline(always)]
     pub async fn stop(&self) {
-        I2S::stop(self.r, self.state).await
+        I2S::<T>::stop().await
     }
 
     /// Sends the current buffer for transmission in the DMA.
@@ -766,19 +748,17 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> OutputStream<'d, S, NB, NS
     where
         S: Sample,
     {
-        I2S::send_from_ram(self.r, self.state, self.buffers.switch()).await
+        I2S::<T>::send_from_ram(self.buffers.switch()).await
     }
 }
 
 /// I2S input
-pub struct InputStream<'d, S: Sample, const NB: usize, const NS: usize> {
-    r: pac::i2s::I2s,
-    state: &'static State,
+pub struct InputStream<'d, T: Instance, S: Sample, const NB: usize, const NS: usize> {
+    _p: Peri<'d, T>,
     buffers: MultiBuffering<S, NB, NS>,
-    _phantom: PhantomData<&'d ()>,
 }
 
-impl<'d, S: Sample, const NB: usize, const NS: usize> InputStream<'d, S, NB, NS> {
+impl<'d, T: Instance, S: Sample, const NB: usize, const NS: usize> InputStream<'d, T, S, NB, NS> {
     /// Get a mutable reference to the current buffer.
     pub fn buffer(&mut self) -> &mut [S] {
         self.buffers.get_mut()
@@ -789,9 +769,10 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> InputStream<'d, S, NB, NS>
     where
         S: Sample,
     {
-        let device = Device::new(self.r);
+        let device = Device::<T>::new();
 
-        if self.state.started.load(Ordering::Relaxed) {
+        let s = T::state();
+        if s.started.load(Ordering::Relaxed) {
             self.stop().await;
         }
 
@@ -800,11 +781,11 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> InputStream<'d, S, NB, NS>
 
         device.update_rx(self.buffers.switch())?;
 
-        self.state.started.store(true, Ordering::Relaxed);
+        s.started.store(true, Ordering::Relaxed);
 
         device.start();
 
-        I2S::wait_rx_ptr_update(self.r, self.state).await;
+        I2S::<T>::wait_rx_ptr_update().await;
 
         Ok(())
     }
@@ -812,7 +793,7 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> InputStream<'d, S, NB, NS>
     /// Stops the I2S transfer and waits until it has stopped.
     #[inline(always)]
     pub async fn stop(&self) {
-        I2S::stop(self.r, self.state).await
+        I2S::<T>::stop().await
     }
 
     /// Sets the current buffer for reception from the DMA.
@@ -822,20 +803,18 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> InputStream<'d, S, NB, NS>
     where
         S: Sample,
     {
-        I2S::receive_from_ram(self.r, self.state, self.buffers.switch_mut()).await
+        I2S::<T>::receive_from_ram(self.buffers.switch_mut()).await
     }
 }
 
 /// I2S full duplex stream (input & output)
-pub struct FullDuplexStream<'d, S: Sample, const NB: usize, const NS: usize> {
-    r: pac::i2s::I2s,
-    state: &'static State,
+pub struct FullDuplexStream<'d, T: Instance, S: Sample, const NB: usize, const NS: usize> {
+    _p: Peri<'d, T>,
     buffers_out: MultiBuffering<S, NB, NS>,
     buffers_in: MultiBuffering<S, NB, NS>,
-    _phantom: PhantomData<&'d ()>,
 }
 
-impl<'d, S: Sample, const NB: usize, const NS: usize> FullDuplexStream<'d, S, NB, NS> {
+impl<'d, T: Instance, S: Sample, const NB: usize, const NS: usize> FullDuplexStream<'d, T, S, NB, NS> {
     /// Get the current output and input buffers.
     pub fn buffers(&mut self) -> (&mut [S], &[S]) {
         (self.buffers_out.get_mut(), self.buffers_in.get())
@@ -846,9 +825,10 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> FullDuplexStream<'d, S, NB
     where
         S: Sample,
     {
-        let device = Device::new(self.r);
+        let device = Device::<T>::new();
 
-        if self.state.started.load(Ordering::Relaxed) {
+        let s = T::state();
+        if s.started.load(Ordering::Relaxed) {
             self.stop().await;
         }
 
@@ -859,12 +839,12 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> FullDuplexStream<'d, S, NB
         device.update_tx(self.buffers_out.switch())?;
         device.update_rx(self.buffers_in.switch_mut())?;
 
-        self.state.started.store(true, Ordering::Relaxed);
+        s.started.store(true, Ordering::Relaxed);
 
         device.start();
 
-        I2S::wait_tx_ptr_update(self.r, self.state).await;
-        I2S::wait_rx_ptr_update(self.r, self.state).await;
+        I2S::<T>::wait_tx_ptr_update().await;
+        I2S::<T>::wait_rx_ptr_update().await;
 
         Ok(())
     }
@@ -872,7 +852,7 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> FullDuplexStream<'d, S, NB
     /// Stops the I2S transfer and waits until it has stopped.
     #[inline(always)]
     pub async fn stop(&self) {
-        I2S::stop(self.r, self.state).await
+        I2S::<T>::stop().await
     }
 
     /// Sets the current buffers for output and input for transmission/reception from the DMA.
@@ -881,18 +861,18 @@ impl<'d, S: Sample, const NB: usize, const NS: usize> FullDuplexStream<'d, S, NB
     where
         S: Sample,
     {
-        I2S::send_from_ram(self.r, self.state, self.buffers_out.switch()).await?;
-        I2S::receive_from_ram(self.r, self.state, self.buffers_in.switch_mut()).await?;
+        I2S::<T>::send_from_ram(self.buffers_out.switch()).await?;
+        I2S::<T>::receive_from_ram(self.buffers_in.switch_mut()).await?;
         Ok(())
     }
 }
 
 /// Helper encapsulating common I2S device operations.
-struct Device(pac::i2s::I2s);
+struct Device<T>(pac::i2s::I2s, PhantomData<T>);
 
-impl Device {
-    fn new(r: pac::i2s::I2s) -> Self {
-        Self(r)
+impl<T: Instance> Device<T> {
+    fn new() -> Self {
+        Self(T::regs(), PhantomData)
     }
 
     #[inline(always)]

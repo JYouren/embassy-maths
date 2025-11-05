@@ -2,7 +2,7 @@
 //!
 //! Time queue drivers may use this to simplify their implementation.
 
-use core::cmp::{Ordering, min};
+use core::cmp::{min, Ordering};
 use core::task::Waker;
 
 use heapless::Vec;

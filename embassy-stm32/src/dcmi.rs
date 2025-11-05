@@ -9,7 +9,7 @@ use embassy_sync::waitqueue::AtomicWaker;
 use crate::dma::Transfer;
 use crate::gpio::{AfType, Pull};
 use crate::interrupt::typelevel::Interrupt;
-use crate::{Peri, interrupt, rcc};
+use crate::{interrupt, rcc, Peri};
 
 /// Interrupt handler.
 pub struct InterruptHandler<T: Instance> {
@@ -108,7 +108,7 @@ macro_rules! config_pins {
     ($($pin:ident),*) => {
                 critical_section::with(|_| {
             $(
-                set_as_af!($pin, AfType::input(Pull::None));
+                $pin.set_as_af($pin.af_num(), AfType::input(Pull::None));
             )*
         })
     };

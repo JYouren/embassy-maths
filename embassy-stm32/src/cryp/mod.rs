@@ -1236,10 +1236,7 @@ impl<'d, T: Instance, M: Mode> Cryp<'d, T, M> {
         }
         if C::REQUIRES_PADDING {
             if last_block_remainder != 0 {
-                panic!(
-                    "Input must be a multiple of {} bytes in ECB and CBC modes. Consider padding or ciphertext stealing.",
-                    C::BLOCK_SIZE
-                );
+                panic!("Input must be a multiple of {} bytes in ECB and CBC modes. Consider padding or ciphertext stealing.", C::BLOCK_SIZE);
             }
         }
         if last_block {
@@ -1706,10 +1703,7 @@ impl<'d, T: Instance> Cryp<'d, T, Async> {
         }
         if C::REQUIRES_PADDING {
             if last_block_remainder != 0 {
-                panic!(
-                    "Input must be a multiple of {} bytes in ECB and CBC modes. Consider padding or ciphertext stealing.",
-                    C::BLOCK_SIZE
-                );
+                panic!("Input must be a multiple of {} bytes in ECB and CBC modes. Consider padding or ciphertext stealing.", C::BLOCK_SIZE);
             }
         }
         if last_block {
@@ -1820,6 +1814,7 @@ impl<'d, T: Instance> Cryp<'d, T, Async> {
         // Configure DMA to transfer input to crypto core.
         let dst_ptr: *mut u32 = T::regs().din().as_ptr();
         let options = TransferOptions {
+            #[cfg(not(gpdma))]
             priority: crate::dma::Priority::High,
             ..Default::default()
         };
@@ -1839,6 +1834,7 @@ impl<'d, T: Instance> Cryp<'d, T, Async> {
         // Configure DMA to transfer input to crypto core.
         let dst_ptr: *mut u32 = T::regs().din().as_ptr();
         let options = TransferOptions {
+            #[cfg(not(gpdma))]
             priority: crate::dma::Priority::High,
             ..Default::default()
         };
@@ -1857,6 +1853,7 @@ impl<'d, T: Instance> Cryp<'d, T, Async> {
         // Configure DMA to get output from crypto core.
         let src_ptr = T::regs().dout().as_ptr();
         let options = TransferOptions {
+            #[cfg(not(gpdma))]
             priority: crate::dma::Priority::VeryHigh,
             ..Default::default()
         };

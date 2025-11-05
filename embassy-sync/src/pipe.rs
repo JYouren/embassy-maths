@@ -7,13 +7,12 @@ use core::ops::Range;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
-use crate::blocking_mutex::Mutex;
 use crate::blocking_mutex::raw::RawMutex;
+use crate::blocking_mutex::Mutex;
 use crate::ring_buffer::RingBuffer;
 use crate::waitqueue::WakerRegistration;
 
 /// Write-only access to a [`Pipe`].
-#[derive(Debug)]
 pub struct Writer<'p, M, const N: usize>
 where
     M: RawMutex,
@@ -53,7 +52,6 @@ where
 
 /// Future returned by [`Pipe::write`] and  [`Writer::write`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-#[derive(Debug)]
 pub struct WriteFuture<'p, M, const N: usize>
 where
     M: RawMutex,
@@ -79,7 +77,6 @@ where
 impl<'p, M, const N: usize> Unpin for WriteFuture<'p, M, N> where M: RawMutex {}
 
 /// Read-only access to a [`Pipe`].
-#[derive(Debug)]
 pub struct Reader<'p, M, const N: usize>
 where
     M: RawMutex,
@@ -131,7 +128,6 @@ where
 
 /// Future returned by [`Pipe::read`] and  [`Reader::read`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-#[derive(Debug)]
 pub struct ReadFuture<'p, M, const N: usize>
 where
     M: RawMutex,
@@ -158,7 +154,6 @@ impl<'p, M, const N: usize> Unpin for ReadFuture<'p, M, N> where M: RawMutex {}
 
 /// Future returned by [`Reader::fill_buf`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-#[derive(Debug)]
 pub struct FillBufFuture<'p, M, const N: usize>
 where
     M: RawMutex,
@@ -204,7 +199,6 @@ pub enum TryWriteError {
     Full,
 }
 
-#[derive(Debug)]
 struct PipeState<const N: usize> {
     buffer: RingBuffer<N>,
     read_waker: WakerRegistration,
@@ -212,7 +206,6 @@ struct PipeState<const N: usize> {
 }
 
 #[repr(transparent)]
-#[derive(Debug)]
 struct Buffer<const N: usize>(UnsafeCell<[u8; N]>);
 
 impl<const N: usize> Buffer<N> {
@@ -237,7 +230,6 @@ unsafe impl<const N: usize> Sync for Buffer<N> {}
 /// buffer is full, attempts to `write` new bytes will wait until buffer space is freed up.
 ///
 /// All data written will become available in the same order as it was written.
-#[derive(Debug)]
 pub struct Pipe<M, const N: usize>
 where
     M: RawMutex,

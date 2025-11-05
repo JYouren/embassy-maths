@@ -9,7 +9,7 @@ use fixed::types::I30F2;
 
 use crate::interrupt::InterruptExt;
 use crate::peripherals::TEMP;
-use crate::{Peri, interrupt, pac};
+use crate::{interrupt, pac, Peri};
 
 /// Interrupt handler.
 pub struct InterruptHandler {

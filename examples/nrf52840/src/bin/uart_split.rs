@@ -30,7 +30,7 @@ async fn main(spawner: Spawner) {
 
     // Spawn a task responsible purely for reading
 
-    spawner.spawn(unwrap!(reader(rx)));
+    unwrap!(spawner.spawn(reader(rx)));
 
     // Message must be in SRAM
     {
@@ -52,7 +52,7 @@ async fn main(spawner: Spawner) {
 }
 
 #[embassy_executor::task]
-async fn reader(mut rx: UarteRx<'static>) {
+async fn reader(mut rx: UarteRx<'static, UARTE0>) {
     let mut buf = [0; 8];
     loop {
         info!("reading...");

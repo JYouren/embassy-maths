@@ -46,7 +46,6 @@ pub struct DateTime {
 /// A day of the week
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 pub enum DayOfWeek {
     Sunday = 0,

@@ -4,7 +4,7 @@
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Level, Output, Speed};
-use embassy_stm32::rcc::{Mco, McoConfig, McoPrescaler, McoSource};
+use embassy_stm32::rcc::{Mco, McoPrescaler, McoSource};
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -13,13 +13,7 @@ async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
     info!("Hello World!");
 
-    let config = {
-        let mut config = McoConfig::default();
-        config.prescaler = McoPrescaler::DIV1;
-        config
-    };
-
-    let _mco = Mco::new(p.MCO, p.PA8, McoSource::HSI, config);
+    let _mco = Mco::new(p.MCO, p.PA8, McoSource::HSI, McoPrescaler::DIV1);
 
     let mut led = Output::new(p.PB14, Level::High, Speed::Low);
 

@@ -1,4 +1,3 @@
-//! Application part of DFU logic
 use embassy_boot::BlockingFirmwareState;
 use embassy_time::{Duration, Instant};
 use embassy_usb::control::{InResponse, OutResponse, Recipient, RequestType};
@@ -6,11 +5,11 @@ use embassy_usb::driver::Driver;
 use embassy_usb::{Builder, FunctionBuilder, Handler};
 use embedded_storage::nor_flash::NorFlash;
 
-use crate::Reset;
 use crate::consts::{
-    APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_RT, DfuAttributes, Request, State, Status,
+    DfuAttributes, Request, State, Status, APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_RT,
     USB_CLASS_APPN_SPEC,
 };
+use crate::Reset;
 
 /// Generic interface for a system that can signal to the bootloader that USB DFU mode is needed on the next boot.
 ///

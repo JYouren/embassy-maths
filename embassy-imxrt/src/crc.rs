@@ -2,9 +2,9 @@
 
 use core::marker::PhantomData;
 
-use crate::clocks::{SysconPeripheral, enable_and_reset};
+use crate::clocks::{enable_and_reset, SysconPeripheral};
 pub use crate::pac::crc_engine::mode::CrcPolynomial as Polynomial;
-use crate::{Peri, PeripheralType, peripherals};
+use crate::{peripherals, Peri, PeripheralType};
 
 /// CRC driver.
 pub struct Crc<'d> {

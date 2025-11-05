@@ -1,10 +1,7 @@
-#[cfg(arm_profile = "legacy")]
-compile_error!("`arch-cortex-ar` does not support the legacy ARM profile, WFE/SEV are not available.");
-
 #[cfg(feature = "executor-interrupt")]
 compile_error!("`executor-interrupt` is not supported with `arch-cortex-ar`.");
 
-#[unsafe(export_name = "__pender")]
+#[export_name = "__pender"]
 #[cfg(any(feature = "executor-thread", feature = "executor-interrupt"))]
 fn __pender(context: *mut ()) {
     // `context` is always `usize::MAX` created by `Executor::run`.
@@ -13,7 +10,7 @@ fn __pender(context: *mut ()) {
     #[cfg(feature = "executor-thread")]
     // Try to make Rust optimize the branching away if we only use thread mode.
     if !cfg!(feature = "executor-interrupt") || context == THREAD_PENDER {
-        aarch32_cpu::asm::sev();
+        cortex_ar::asm::sev();
         return;
     }
 }
@@ -26,10 +23,10 @@ mod thread {
 
     use core::marker::PhantomData;
 
-    use aarch32_cpu::asm::wfe;
+    use cortex_ar::asm::wfe;
     pub use embassy_executor_macros::main_cortex_ar as main;
 
-    use crate::{Spawner, raw};
+    use crate::{raw, Spawner};
 
     /// Thread mode executor, using WFE/SEV.
     ///

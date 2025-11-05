@@ -1,13 +1,13 @@
 //! A synchronization primitive for controlling access to a pool of resources.
 use core::cell::{Cell, RefCell};
 use core::convert::Infallible;
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::task::{Poll, Waker};
 
 use heapless::Deque;
 
-use crate::blocking_mutex::Mutex;
 use crate::blocking_mutex::raw::RawMutex;
+use crate::blocking_mutex::Mutex;
 use crate::waitqueue::WakerRegistration;
 
 /// An asynchronous semaphore.
@@ -46,7 +46,6 @@ pub trait Semaphore: Sized {
 /// A representation of a number of acquired permits.
 ///
 /// The acquired permits will be released back to the [`Semaphore`] when this is dropped.
-#[derive(Debug)]
 pub struct SemaphoreReleaser<'a, S: Semaphore> {
     semaphore: &'a S,
     permits: usize,
@@ -182,7 +181,6 @@ impl<M: RawMutex> Semaphore for GreedySemaphore<M> {
     }
 }
 
-#[derive(Debug)]
 struct SemaphoreState {
     permits: usize,
     waker: WakerRegistration,
@@ -223,7 +221,6 @@ impl SemaphoreState {
 ///
 /// Up to `N` tasks may attempt to acquire permits concurrently. If additional
 /// tasks attempt to acquire a permit, a [`WaitQueueFull`] error will be returned.
-#[derive(Debug)]
 pub struct FairSemaphore<M, const N: usize>
 where
     M: RawMutex,
@@ -344,7 +341,6 @@ impl<M: RawMutex, const N: usize> Semaphore for FairSemaphore<M, N> {
     }
 }
 
-#[derive(Debug)]
 struct FairAcquire<'a, M: RawMutex, const N: usize> {
     sema: &'a FairSemaphore<M, N>,
     permits: usize,
@@ -368,7 +364,6 @@ impl<'a, M: RawMutex, const N: usize> core::future::Future for FairAcquire<'a, M
     }
 }
 
-#[derive(Debug)]
 struct FairAcquireAll<'a, M: RawMutex, const N: usize> {
     sema: &'a FairSemaphore<M, N>,
     min: usize,
@@ -392,7 +387,6 @@ impl<'a, M: RawMutex, const N: usize> core::future::Future for FairAcquireAll<'a
     }
 }
 
-#[derive(Debug)]
 struct FairSemaphoreState<const N: usize> {
     permits: usize,
     next_ticket: usize,

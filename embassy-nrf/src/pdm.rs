@@ -4,7 +4,7 @@
 
 use core::future::poll_fn;
 use core::marker::PhantomData;
-use core::sync::atomic::{Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, Ordering};
 use core::task::Poll;
 
 use embassy_hal_internal::drop::OnDrop;
@@ -13,7 +13,7 @@ use embassy_sync::waitqueue::AtomicWaker;
 use fixed::types::I7F1;
 
 use crate::chip::EASY_DMA_SIZE;
-use crate::gpio::{AnyPin, DISCONNECTED, Pin as GpioPin, SealedPin};
+use crate::gpio::{AnyPin, Pin as GpioPin, SealedPin, DISCONNECTED};
 use crate::interrupt::typelevel::Interrupt;
 use crate::pac::gpio::vals as gpiovals;
 use crate::pac::pdm::vals;
@@ -53,10 +53,8 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
 }
 
 /// PDM microphone interface
-pub struct Pdm<'d> {
-    r: pac::pdm::Pdm,
-    state: &'static State,
-    _phantom: PhantomData<&'d ()>,
+pub struct Pdm<'d, T: Instance> {
+    _peri: Peri<'d, T>,
 }
 
 /// PDM error
@@ -88,9 +86,9 @@ pub enum SamplerState {
     Stopped,
 }
 
-impl<'d> Pdm<'d> {
+impl<'d, T: Instance> Pdm<'d, T> {
     /// Create PDM driver
-    pub fn new<T: Instance>(
+    pub fn new(
         pdm: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         clk: Peri<'d, impl GpioPin>,
@@ -100,7 +98,7 @@ impl<'d> Pdm<'d> {
         Self::new_inner(pdm, clk.into(), din.into(), config)
     }
 
-    fn new_inner<T: Instance>(_pdm: Peri<'d, T>, clk: Peri<'d, AnyPin>, din: Peri<'d, AnyPin>, config: Config) -> Self {
+    fn new_inner(pdm: Peri<'d, T>, clk: Peri<'d, AnyPin>, din: Peri<'d, AnyPin>, config: Config) -> Self {
         let r = T::regs();
 
         // setup gpio pins
@@ -135,11 +133,7 @@ impl<'d> Pdm<'d> {
 
         r.enable().write(|w| w.set_enable(true));
 
-        Self {
-            r: T::regs(),
-            state: T::state(),
-            _phantom: PhantomData,
-        }
+        Self { _peri: pdm }
     }
 
     fn _set_gain(r: pac::pdm::Pdm, gain_left: I7F1, gain_right: I7F1) {
@@ -153,26 +147,26 @@ impl<'d> Pdm<'d> {
 
     /// Adjust the gain of the PDM microphone on the fly
     pub fn set_gain(&mut self, gain_left: I7F1, gain_right: I7F1) {
-        Self::_set_gain(self.r, gain_left, gain_right)
+        Self::_set_gain(T::regs(), gain_left, gain_right)
     }
 
     /// Start sampling microphone data into a dummy buffer.
     /// Useful to start the microphone and keep it active between recording samples.
     pub async fn start(&mut self) {
-        // start dummy sampling because microphone needs some setup time
-        self.r.sample().ptr().write_value(DUMMY_BUFFER.as_ptr() as u32);
-        self.r
-            .sample()
-            .maxcnt()
-            .write(|w| w.set_buffsize(DUMMY_BUFFER.len() as _));
+        let r = T::regs();
 
-        self.r.tasks_start().write_value(1);
+        // start dummy sampling because microphone needs some setup time
+        r.sample().ptr().write_value(DUMMY_BUFFER.as_ptr() as u32);
+        r.sample().maxcnt().write(|w| w.set_buffsize(DUMMY_BUFFER.len() as _));
+
+        r.tasks_start().write_value(1);
     }
 
     /// Stop sampling microphone data inta a dummy buffer
     pub async fn stop(&mut self) {
-        self.r.tasks_stop().write_value(1);
-        self.r.events_started().write_value(0);
+        let r = T::regs();
+        r.tasks_stop().write_value(1);
+        r.events_started().write_value(0);
     }
 
     /// Sample data into the given buffer
@@ -184,11 +178,12 @@ impl<'d> Pdm<'d> {
             return Err(Error::BufferTooLong);
         }
 
-        if self.r.events_started().read() == 0 {
+        let r = T::regs();
+
+        if r.events_started().read() == 0 {
             return Err(Error::NotRunning);
         }
 
-        let r = self.r;
         let drop = OnDrop::new(move || {
             r.intenclr().write(|w| w.set_end(true));
             r.events_stopped().write_value(0);
@@ -203,37 +198,34 @@ impl<'d> Pdm<'d> {
         // setup user buffer
         let ptr = buffer.as_ptr();
         let len = buffer.len();
-        self.r.sample().ptr().write_value(ptr as u32);
-        self.r.sample().maxcnt().write(|w| w.set_buffsize(len as _));
+        r.sample().ptr().write_value(ptr as u32);
+        r.sample().maxcnt().write(|w| w.set_buffsize(len as _));
 
         // wait till the current sample is finished and the user buffer sample is started
-        self.wait_for_sample().await;
+        Self::wait_for_sample().await;
 
         // reset the buffer back to the dummy buffer
-        self.r.sample().ptr().write_value(DUMMY_BUFFER.as_ptr() as u32);
-        self.r
-            .sample()
-            .maxcnt()
-            .write(|w| w.set_buffsize(DUMMY_BUFFER.len() as _));
+        r.sample().ptr().write_value(DUMMY_BUFFER.as_ptr() as u32);
+        r.sample().maxcnt().write(|w| w.set_buffsize(DUMMY_BUFFER.len() as _));
 
         // wait till the user buffer is sampled
-        self.wait_for_sample().await;
+        Self::wait_for_sample().await;
 
         drop.defuse();
 
         Ok(())
     }
 
-    async fn wait_for_sample(&mut self) {
-        self.r.events_end().write_value(0);
-        self.r.intenset().write(|w| w.set_end(true));
+    async fn wait_for_sample() {
+        let r = T::regs();
+
+        r.events_end().write_value(0);
+        r.intenset().write(|w| w.set_end(true));
 
         compiler_fence(Ordering::SeqCst);
 
-        let state = self.state;
-        let r = self.r;
         poll_fn(|cx| {
-            state.waker.register(cx.waker());
+            T::state().waker.register(cx.waker());
             if r.events_end().read() != 0 {
                 return Poll::Ready(());
             }
@@ -263,18 +255,20 @@ impl<'d> Pdm<'d> {
     where
         S: FnMut(&[i16; N]) -> SamplerState,
     {
-        if self.r.events_started().read() != 0 {
+        let r = T::regs();
+
+        if r.events_started().read() != 0 {
             return Err(Error::AlreadyRunning);
         }
 
-        self.r.sample().ptr().write_value(bufs[0].as_mut_ptr() as u32);
-        self.r.sample().maxcnt().write(|w| w.set_buffsize(N as _));
+        r.sample().ptr().write_value(bufs[0].as_mut_ptr() as u32);
+        r.sample().maxcnt().write(|w| w.set_buffsize(N as _));
 
         // Reset and enable the events
-        self.r.events_end().write_value(0);
-        self.r.events_started().write_value(0);
-        self.r.events_stopped().write_value(0);
-        self.r.intenset().write(|w| {
+        r.events_end().write_value(0);
+        r.events_started().write_value(0);
+        r.events_stopped().write_value(0);
+        r.intenset().write(|w| {
             w.set_end(true);
             w.set_started(true);
             w.set_stopped(true);
@@ -284,24 +278,23 @@ impl<'d> Pdm<'d> {
         // wouldn't happen anyway
         compiler_fence(Ordering::SeqCst);
 
-        self.r.tasks_start().write_value(1);
+        r.tasks_start().write_value(1);
 
         let mut current_buffer = 0;
 
         let mut done = false;
 
-        let r = self.r;
-        let drop = OnDrop::new(move || {
+        let drop = OnDrop::new(|| {
             r.tasks_stop().write_value(1);
             // N.B. It would be better if this were async, but Drop only support sync code
             while r.events_stopped().read() != 0 {}
         });
 
-        let state = self.state;
-        let r = self.r;
         // Wait for events and complete when the sampler indicates it has had enough
         poll_fn(|cx| {
-            state.waker.register(cx.waker());
+            let r = T::regs();
+
+            T::state().waker.register(cx.waker());
 
             if r.events_end().read() != 0 {
                 compiler_fence(Ordering::SeqCst);
@@ -418,14 +411,16 @@ impl From<Edge> for vals::Edge {
     }
 }
 
-impl<'d> Drop for Pdm<'d> {
+impl<'d, T: Instance> Drop for Pdm<'d, T> {
     fn drop(&mut self) {
-        self.r.tasks_stop().write_value(1);
+        let r = T::regs();
 
-        self.r.enable().write(|w| w.set_enable(false));
+        r.tasks_stop().write_value(1);
 
-        self.r.psel().din().write_value(DISCONNECTED);
-        self.r.psel().clk().write_value(DISCONNECTED);
+        r.enable().write(|w| w.set_enable(false));
+
+        r.psel().din().write_value(DISCONNECTED);
+        r.psel().clk().write_value(DISCONNECTED);
     }
 }
 

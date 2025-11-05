@@ -1,5 +1,5 @@
 use core::cell::RefCell;
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::task::Poll;
 
 use embassy_sync::waitqueue::WakerRegistration;

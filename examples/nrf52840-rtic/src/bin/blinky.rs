@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(type_alias_impl_trait)]
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -7,7 +8,7 @@ use {defmt_rtt as _, panic_probe as _};
 mod app {
     use defmt::info;
     use embassy_nrf::gpio::{Level, Output, OutputDrive};
-    use embassy_nrf::{Peri, peripherals};
+    use embassy_nrf::{peripherals, Peri};
     use embassy_time::Timer;
 
     #[shared]

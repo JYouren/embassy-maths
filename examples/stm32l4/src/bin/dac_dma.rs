@@ -3,7 +3,6 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_stm32::Peri;
 use embassy_stm32::dac::{DacCh1, DacCh2, ValueArray};
 use embassy_stm32::mode::Async;
 use embassy_stm32::pac::timer::vals::Mms;
@@ -11,6 +10,7 @@ use embassy_stm32::peripherals::{DAC1, TIM6, TIM7};
 use embassy_stm32::rcc::frequency;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::timer::low_level::Timer;
+use embassy_stm32::Peri;
 use micromath::F32Ext;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -24,8 +24,8 @@ async fn main(spawner: Spawner) {
     // Obtain two independent channels (p.DAC1 can only be consumed once, though!)
     let (dac_ch1, dac_ch2) = embassy_stm32::dac::Dac::new(p.DAC1, p.DMA1_CH3, p.DMA1_CH4, p.PA4, p.PA5).split();
 
-    spawner.spawn(dac_task1(p.TIM6, dac_ch1).unwrap());
-    spawner.spawn(dac_task2(p.TIM7, dac_ch2).unwrap());
+    spawner.spawn(dac_task1(p.TIM6, dac_ch1)).ok();
+    spawner.spawn(dac_task2(p.TIM7, dac_ch2)).ok();
 }
 
 #[embassy_executor::task]

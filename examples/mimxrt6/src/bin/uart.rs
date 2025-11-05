@@ -48,8 +48,8 @@ async fn main(spawner: Spawner) {
     let usart4 = Uart::new_blocking(p.FLEXCOMM4, p.PIO0_29, p.PIO0_30, Default::default()).unwrap();
 
     let (_, usart4) = usart4.split();
-    spawner.spawn(usart4_task(usart4).unwrap());
+    spawner.must_spawn(usart4_task(usart4));
 
     let usart2 = UartTx::new_blocking(p.FLEXCOMM2, p.PIO0_15, Default::default()).unwrap();
-    spawner.spawn(usart2_task(usart2).unwrap());
+    spawner.must_spawn(usart2_task(usart2));
 }

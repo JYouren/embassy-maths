@@ -72,6 +72,7 @@ async fn main(_spawner: Spawner) {
         p.PB3,  // ck
         p.DMA1_CH7,
         &mut dma_buffer,
+        Hertz(48_000),
         i2s_config,
     );
     i2s.start();

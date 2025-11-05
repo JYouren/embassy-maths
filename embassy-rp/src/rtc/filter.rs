@@ -4,8 +4,7 @@ use crate::pac::rtc::regs::{IrqSetup0, IrqSetup1};
 /// A filter used for [`RealTimeClock::schedule_alarm`].
 ///
 /// [`RealTimeClock::schedule_alarm`]: struct.RealTimeClock.html#method.schedule_alarm
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Default)]
 pub struct DateTimeFilter {
     /// The year that this alarm should trigger on, `None` if the RTC alarm should not trigger on a year value.
     pub year: Option<u16>,

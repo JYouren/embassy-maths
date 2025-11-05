@@ -1,18 +1,18 @@
 //! ADC driver.
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::marker::PhantomData;
 use core::mem;
-use core::sync::atomic::{Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, Ordering};
 use core::task::Poll;
 
 use embassy_sync::waitqueue::AtomicWaker;
 
 use crate::gpio::{self, AnyPin, Pull, SealedPin as GpioPin};
-use crate::interrupt::InterruptExt;
 use crate::interrupt::typelevel::Binding;
+use crate::interrupt::InterruptExt;
 use crate::pac::dma::vals::TreqSel;
 use crate::peripherals::{ADC, ADC_TEMP_SENSOR};
-use crate::{Peri, RegExt, dma, interrupt, pac, peripherals};
+use crate::{dma, interrupt, pac, peripherals, Peri, RegExt};
 
 static WAKER: AtomicWaker = AtomicWaker::new();
 

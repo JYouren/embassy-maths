@@ -1,15 +1,14 @@
-//! DFU bootloader part of DFU logic
 use embassy_boot::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterError};
 use embassy_usb::control::{InResponse, OutResponse, Recipient, RequestType};
 use embassy_usb::driver::Driver;
 use embassy_usb::{Builder, FunctionBuilder, Handler};
 use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
 
-use crate::Reset;
 use crate::consts::{
-    APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_DFU, DfuAttributes, Request, State, Status,
+    DfuAttributes, Request, State, Status, APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_DFU,
     USB_CLASS_APPN_SPEC,
 };
+use crate::Reset;
 
 /// Internal state for USB DFU
 pub struct Control<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, const BLOCK_SIZE: usize> {
@@ -183,7 +182,7 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, const BLOCK_SIZE: usize> Ha
             Ok(Request::GetStatus) => {
                 match self.state {
                     State::DlSync => self.state = State::Download,
-                    State::ManifestSync => self.state = State::ManifestWaitReset,
+                    State::ManifestSync => self.reset.sys_reset(),
                     _ => {}
                 }
 
@@ -200,12 +199,6 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, const BLOCK_SIZE: usize> Ha
                 Some(InResponse::Rejected)
             }
             _ => None,
-        }
-    }
-
-    fn reset(&mut self) {
-        if matches!(self.state, State::ManifestSync | State::ManifestWaitReset) {
-            self.reset.sys_reset()
         }
     }
 }

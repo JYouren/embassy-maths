@@ -1,3 +1,5 @@
+#![cfg_attr(gpdma, allow(unused))]
+
 use core::future::poll_fn;
 use core::task::{Poll, Waker};
 
@@ -283,20 +285,17 @@ impl<'a, W: Word> WritableDmaRingBuffer<'a, W> {
     }
 
     /// Write an exact number of elements to the ringbuffer.
-    ///
-    /// Returns the remaining write capacity in the buffer.
-    #[allow(dead_code)]
     pub async fn write_exact(&mut self, dma: &mut impl DmaCtrl, buffer: &[W]) -> Result<usize, Error> {
-        let mut written_len = 0;
+        let mut written_data = 0;
         let buffer_len = buffer.len();
 
         poll_fn(|cx| {
             dma.set_waker(cx.waker());
 
-            match self.write(dma, &buffer[written_len..buffer_len]) {
+            match self.write(dma, &buffer[written_data..buffer_len]) {
                 Ok((len, remaining)) => {
-                    written_len += len;
-                    if written_len == buffer_len {
+                    written_data += len;
+                    if written_data == buffer_len {
                         Poll::Ready(Ok(remaining))
                     } else {
                         Poll::Pending

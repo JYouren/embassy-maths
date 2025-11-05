@@ -9,7 +9,7 @@ use defmt::*;
 use embassy_executor::Executor;
 use embassy_stm32::mode::Async;
 use embassy_stm32::time::mhz;
-use embassy_stm32::{Config, spi};
+use embassy_stm32::{spi, Config};
 use heapless::String;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
@@ -63,6 +63,6 @@ fn main() -> ! {
     let executor = EXECUTOR.init(Executor::new());
 
     executor.run(|spawner| {
-        spawner.spawn(unwrap!(main_task(spi)));
+        unwrap!(spawner.spawn(main_task(spi)));
     })
 }

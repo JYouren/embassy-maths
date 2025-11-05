@@ -2,18 +2,18 @@ use core::marker::PhantomData;
 
 use embassy_hal_internal::PeripheralType;
 use embassy_usb_driver::{EndpointAddress, EndpointAllocError, EndpointType, Event, Unsupported};
-pub use embassy_usb_synopsys_otg::Config;
-use embassy_usb_synopsys_otg::otg_v1::Otg;
 use embassy_usb_synopsys_otg::otg_v1::vals::Dspd;
+use embassy_usb_synopsys_otg::otg_v1::Otg;
+pub use embassy_usb_synopsys_otg::Config;
 use embassy_usb_synopsys_otg::{
-    Bus as OtgBus, ControlPipe, Driver as OtgDriver, Endpoint, In, OtgInstance, Out, PhyType, State,
-    on_interrupt as on_interrupt_impl,
+    on_interrupt as on_interrupt_impl, Bus as OtgBus, ControlPipe, Driver as OtgDriver, Endpoint, In, OtgInstance, Out,
+    PhyType, State,
 };
 
 use crate::gpio::{AfType, OutputType, Speed};
 use crate::interrupt::typelevel::Interrupt;
 use crate::rcc::{self, RccPeripheral};
-use crate::{Peri, interrupt};
+use crate::{interrupt, Peri};
 
 const MAX_EP_COUNT: usize = 9;
 
@@ -34,7 +34,7 @@ macro_rules! config_ulpi_pins {
     ($($pin:ident),*) => {
                 critical_section::with(|_| {
             $(
-                set_as_af!($pin, AfType::output(OutputType::PushPull, Speed::VeryHigh));
+                $pin.set_as_af($pin.af_num(), AfType::output(OutputType::PushPull, Speed::VeryHigh));
             )*
         })
     };
@@ -68,8 +68,8 @@ impl<'d, T: Instance> Driver<'d, T> {
         ep_out_buffer: &'d mut [u8],
         config: Config,
     ) -> Self {
-        set_as_af!(dp, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-        set_as_af!(dm, AfType::output(OutputType::PushPull, Speed::VeryHigh));
+        dp.set_as_af(dp.af_num(), AfType::output(OutputType::PushPull, Speed::VeryHigh));
+        dm.set_as_af(dm.af_num(), AfType::output(OutputType::PushPull, Speed::VeryHigh));
 
         let regs = T::regs();
 
@@ -107,8 +107,8 @@ impl<'d, T: Instance> Driver<'d, T> {
         // For STM32U5 High speed pins need to be left in analog mode
         #[cfg(not(any(all(stm32u5, peri_usb_otg_hs), all(stm32wba, peri_usb_otg_hs))))]
         {
-            set_as_af!(_dp, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-            set_as_af!(_dm, AfType::output(OutputType::PushPull, Speed::VeryHigh));
+            _dp.set_as_af(_dp.af_num(), AfType::output(OutputType::PushPull, Speed::VeryHigh));
+            _dm.set_as_af(_dm.af_num(), AfType::output(OutputType::PushPull, Speed::VeryHigh));
         }
 
         let instance = OtgInstance {

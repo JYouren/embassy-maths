@@ -3,17 +3,17 @@
 #![macro_use]
 use core::future::poll_fn;
 use core::marker::PhantomData;
-use core::sync::atomic::{Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, Ordering};
 use core::task::Poll;
 
 use embassy_embedded_hal::SetConfig;
 use embassy_hal_internal::{Peri, PeripheralType};
 use embassy_sync::waitqueue::AtomicWaker;
-pub use embedded_hal_02::spi::{MODE_0, MODE_1, MODE_2, MODE_3, Mode, Phase, Polarity};
+pub use embedded_hal_02::spi::{Mode, Phase, Polarity, MODE_0, MODE_1, MODE_2, MODE_3};
 pub use pac::spis::vals::Order as BitOrder;
 
 use crate::chip::{EASY_DMA_SIZE, FORCE_COPY_BUFFER_SIZE};
-use crate::gpio::{self, AnyPin, OutputDrive, Pin as GpioPin, SealedPin as _, convert_drive};
+use crate::gpio::{self, convert_drive, AnyPin, OutputDrive, Pin as GpioPin, SealedPin as _};
 use crate::interrupt::typelevel::Interrupt;
 use crate::pac::gpio::vals as gpiovals;
 use crate::pac::spis::vals;
@@ -96,16 +96,14 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
     }
 }
 
-/// Serial Peripheral Interface in slave mode.
-pub struct Spis<'d> {
-    r: pac::spis::Spis,
-    state: &'static State,
-    _p: PhantomData<&'d ()>,
+/// SPIS driver.
+pub struct Spis<'d, T: Instance> {
+    _p: Peri<'d, T>,
 }
 
-impl<'d> Spis<'d> {
+impl<'d, T: Instance> Spis<'d, T> {
     /// Create a new SPIS driver.
-    pub fn new<T: Instance>(
+    pub fn new(
         spis: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         cs: Peri<'d, impl GpioPin>,
@@ -125,7 +123,7 @@ impl<'d> Spis<'d> {
     }
 
     /// Create a new SPIS driver, capable of TX only (MISO only).
-    pub fn new_txonly<T: Instance>(
+    pub fn new_txonly(
         spis: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         cs: Peri<'d, impl GpioPin>,
@@ -137,7 +135,7 @@ impl<'d> Spis<'d> {
     }
 
     /// Create a new SPIS driver, capable of RX only (MOSI only).
-    pub fn new_rxonly<T: Instance>(
+    pub fn new_rxonly(
         spis: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         cs: Peri<'d, impl GpioPin>,
@@ -149,7 +147,7 @@ impl<'d> Spis<'d> {
     }
 
     /// Create a new SPIS driver, capable of TX only (MISO only) without SCK pin.
-    pub fn new_txonly_nosck<T: Instance>(
+    pub fn new_txonly_nosck(
         spis: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         cs: Peri<'d, impl GpioPin>,
@@ -159,8 +157,8 @@ impl<'d> Spis<'d> {
         Self::new_inner(spis, cs.into(), None, Some(miso.into()), None, config)
     }
 
-    fn new_inner<T: Instance>(
-        _spis: Peri<'d, T>,
+    fn new_inner(
+        spis: Peri<'d, T>,
         cs: Peri<'d, AnyPin>,
         sck: Option<Peri<'d, AnyPin>>,
         miso: Option<Peri<'d, AnyPin>>,
@@ -193,14 +191,10 @@ impl<'d> Spis<'d> {
         // Enable SPIS instance.
         r.enable().write(|w| w.set_enable(vals::Enable::ENABLED));
 
-        let mut spis = Self {
-            r: T::regs(),
-            state: T::state(),
-            _p: PhantomData,
-        };
+        let mut spis = Self { _p: spis };
 
         // Apply runtime peripheral configuration
-        spis.set_config(&config).unwrap();
+        Self::set_config(&mut spis, &config).unwrap();
 
         // Disable all events interrupts.
         r.intenclr().write(|w| w.0 = 0xFFFF_FFFF);
@@ -218,21 +212,21 @@ impl<'d> Spis<'d> {
 
         compiler_fence(Ordering::SeqCst);
 
-        let r = self.r;
+        let r = T::regs();
 
         // Set up the DMA write.
         if tx.len() > EASY_DMA_SIZE {
             return Err(Error::TxBufferTooLong);
         }
-        r.dma().tx().ptr().write_value(tx as *const u8 as _);
-        r.dma().tx().maxcnt().write(|w| w.set_maxcnt(tx.len() as _));
+        r.txd().ptr().write_value(tx as *const u8 as _);
+        r.txd().maxcnt().write(|w| w.set_maxcnt(tx.len() as _));
 
         // Set up the DMA read.
         if rx.len() > EASY_DMA_SIZE {
             return Err(Error::RxBufferTooLong);
         }
-        r.dma().rx().ptr().write_value(rx as *mut u8 as _);
-        r.dma().rx().maxcnt().write(|w| w.set_maxcnt(rx.len() as _));
+        r.rxd().ptr().write_value(rx as *mut u8 as _);
+        r.rxd().maxcnt().write(|w| w.set_maxcnt(rx.len() as _));
 
         // Reset end event.
         r.events_end().write_value(0);
@@ -245,7 +239,7 @@ impl<'d> Spis<'d> {
 
     fn blocking_inner_from_ram(&mut self, rx: *mut [u8], tx: *const [u8]) -> Result<(usize, usize), Error> {
         compiler_fence(Ordering::SeqCst);
-        let r = self.r;
+        let r = T::regs();
 
         // Acquire semaphore.
         if r.semstat().read().0 != 1 {
@@ -260,8 +254,8 @@ impl<'d> Spis<'d> {
         // Wait for 'end' event.
         while r.events_end().read() == 0 {}
 
-        let n_rx = r.dma().rx().amount().read().0 as usize;
-        let n_tx = r.dma().tx().amount().read().0 as usize;
+        let n_rx = r.rxd().amount().read().0 as usize;
+        let n_tx = r.txd().amount().read().0 as usize;
 
         compiler_fence(Ordering::SeqCst);
 
@@ -282,8 +276,8 @@ impl<'d> Spis<'d> {
     }
 
     async fn async_inner_from_ram(&mut self, rx: *mut [u8], tx: *const [u8]) -> Result<(usize, usize), Error> {
-        let r = self.r;
-        let s = self.state;
+        let r = T::regs();
+        let s = T::state();
 
         // Clear status register.
         r.status().write(|w| {
@@ -326,8 +320,8 @@ impl<'d> Spis<'d> {
         })
         .await;
 
-        let n_rx = r.dma().rx().amount().read().0 as usize;
-        let n_tx = r.dma().tx().amount().read().0 as usize;
+        let n_rx = r.rxd().amount().read().0 as usize;
+        let n_tx = r.txd().amount().read().0 as usize;
 
         compiler_fence(Ordering::SeqCst);
 
@@ -426,21 +420,21 @@ impl<'d> Spis<'d> {
 
     /// Checks if last transaction overread.
     pub fn is_overread(&mut self) -> bool {
-        self.r.status().read().overread()
+        T::regs().status().read().overread()
     }
 
     /// Checks if last transaction overflowed.
     pub fn is_overflow(&mut self) -> bool {
-        self.r.status().read().overflow()
+        T::regs().status().read().overflow()
     }
 }
 
-impl<'d> Drop for Spis<'d> {
+impl<'d, T: Instance> Drop for Spis<'d, T> {
     fn drop(&mut self) {
         trace!("spis drop");
 
         // Disable
-        let r = self.r;
+        let r = T::regs();
         r.enable().write(|w| w.set_enable(vals::Enable::DISABLED));
 
         gpio::deconfigure_pin(r.psel().sck().read());
@@ -495,11 +489,11 @@ macro_rules! impl_spis {
 
 // ====================
 
-impl<'d> SetConfig for Spis<'d> {
+impl<'d, T: Instance> SetConfig for Spis<'d, T> {
     type Config = Config;
     type ConfigError = ();
     fn set_config(&mut self, config: &Self::Config) -> Result<(), Self::ConfigError> {
-        let r = self.r;
+        let r = T::regs();
         // Configure mode.
         let mode = config.mode;
         r.config().write(|w| {
