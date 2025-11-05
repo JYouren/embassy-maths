@@ -113,12 +113,12 @@ static EXECUTOR_LOW: StaticCell<Executor> = StaticCell::new();
 
 #[interrupt]
 unsafe fn UART4() {
-    unsafe { EXECUTOR_HIGH.on_interrupt() }
+    EXECUTOR_HIGH.on_interrupt()
 }
 
 #[interrupt]
 unsafe fn UART5() {
-    unsafe { EXECUTOR_MED.on_interrupt() }
+    EXECUTOR_MED.on_interrupt()
 }
 
 #[entry]
@@ -135,16 +135,16 @@ fn main() -> ! {
     // High-priority executor: UART4, priority level 6
     interrupt::UART4.set_priority(Priority::P6);
     let spawner = EXECUTOR_HIGH.start(interrupt::UART4);
-    spawner.spawn(unwrap!(run_high()));
+    unwrap!(spawner.spawn(run_high()));
 
     // Medium-priority executor: UART5, priority level 7
     interrupt::UART5.set_priority(Priority::P7);
     let spawner = EXECUTOR_MED.start(interrupt::UART5);
-    spawner.spawn(unwrap!(run_med()));
+    unwrap!(spawner.spawn(run_med()));
 
     // Low priority executor: runs in thread mode, using WFE/SEV
     let executor = EXECUTOR_LOW.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(unwrap!(run_low()));
+        unwrap!(spawner.spawn(run_low()));
     });
 }

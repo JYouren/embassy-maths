@@ -7,9 +7,9 @@ use core::task::Poll;
 use embassy_futures::block_on;
 use embassy_sync::waitqueue::AtomicWaker;
 
-use crate::clocks::{SysconPeripheral, enable_and_reset};
+use crate::clocks::{enable_and_reset, SysconPeripheral};
 use crate::interrupt::typelevel::Interrupt;
-use crate::{Peri, PeripheralType, interrupt, peripherals};
+use crate::{interrupt, peripherals, Peri, PeripheralType};
 
 static RNG_WAKER: AtomicWaker = AtomicWaker::new();
 

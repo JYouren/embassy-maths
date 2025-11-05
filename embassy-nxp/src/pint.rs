@@ -5,12 +5,11 @@ use core::pin::Pin as FuturePin;
 use core::task::{Context, Poll};
 
 use critical_section::Mutex;
-use embassy_hal_internal::interrupt::InterruptExt;
 use embassy_sync::waitqueue::AtomicWaker;
 
+use crate::gpio::{self, inputmux_reg, pint_reg, syscon_reg, AnyPin, Level, SealedPin};
+use crate::pac::interrupt;
 use crate::Peri;
-use crate::gpio::{self, AnyPin, Level, SealedPin};
-use crate::pac::{INPUTMUX, PINT, SYSCON, interrupt};
 
 struct PinInterrupt {
     assigned: bool,
@@ -89,18 +88,18 @@ enum InterruptOn {
 }
 
 pub(crate) fn init() {
-    SYSCON.ahbclkctrl0().modify(|w| w.set_pint(true));
+    syscon_reg().ahbclkctrl0.modify(|_, w| w.pint().enable());
 
     // Enable interrupts
     unsafe {
-        interrupt::PIN_INT0.enable();
-        interrupt::PIN_INT1.enable();
-        interrupt::PIN_INT2.enable();
-        interrupt::PIN_INT3.enable();
-        interrupt::PIN_INT4.enable();
-        interrupt::PIN_INT5.enable();
-        interrupt::PIN_INT6.enable();
-        interrupt::PIN_INT7.enable();
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT0);
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT1);
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT2);
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT3);
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT4);
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT5);
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT6);
+        crate::pac::NVIC::unmask(crate::pac::Interrupt::PIN_INT7);
     };
 
     info!("Pin interrupts initialized");
@@ -120,19 +119,24 @@ impl<'d> InputFuture<'d> {
         let interrupt_number = next_available_interrupt()?;
 
         // Clear interrupt, just in case
-        PINT.rise().write(|w| w.set_rdet(1 << interrupt_number));
-        PINT.fall().write(|w| w.set_fdet(1 << interrupt_number));
+        pint_reg()
+            .rise
+            .write(|w| unsafe { w.rdet().bits(1 << interrupt_number) });
+        pint_reg()
+            .fall
+            .write(|w| unsafe { w.fdet().bits(1 << interrupt_number) });
 
         // Enable input multiplexing on pin interrupt register 0 for pin (32*bank + pin_number)
-        INPUTMUX
-            .pintsel(interrupt_number as usize)
-            .write(|w| w.set_intpin(32 * pin.pin_bank() as u8 + pin.pin_number()));
+        inputmux_reg().pintsel[interrupt_number]
+            .write(|w| unsafe { w.intpin().bits(32 * pin.pin_bank() as u8 + pin.pin_number()) });
 
         match interrupt_on {
             InterruptOn::Level(level) => {
                 // Set pin interrupt register to edge sensitive or level sensitive
                 // 0 = edge sensitive, 1 = level sensitive
-                PINT.isel().modify(|w| w.set_pmode(w.pmode() | (1 << interrupt_number)));
+                pint_reg()
+                    .isel
+                    .modify(|r, w| unsafe { w.bits(r.bits() | (1 << interrupt_number)) });
 
                 // Enable level interrupt.
                 //
@@ -140,44 +144,63 @@ impl<'d> InputFuture<'d> {
                 // is activated.
 
                 // 0 = no-op, 1 = enable
-                PINT.sienr().write(|w| w.set_setenrl(1 << interrupt_number));
+                pint_reg()
+                    .sienr
+                    .write(|w| unsafe { w.setenrl().bits(1 << interrupt_number) });
 
                 // Set active level
                 match level {
                     Level::Low => {
                         // 0 = no-op, 1 = select LOW
-                        PINT.cienf().write(|w| w.set_cenaf(1 << interrupt_number));
+                        pint_reg()
+                            .cienf
+                            .write(|w| unsafe { w.cenaf().bits(1 << interrupt_number) });
                     }
                     Level::High => {
                         // 0 = no-op, 1 = select HIGH
-                        PINT.sienf().write(|w| w.set_setenaf(1 << interrupt_number));
+                        pint_reg()
+                            .sienf
+                            .write(|w| unsafe { w.setenaf().bits(1 << interrupt_number) });
                     }
                 }
             }
             InterruptOn::Edge(edge) => {
                 // Set pin interrupt register to edge sensitive or level sensitive
                 // 0 = edge sensitive, 1 = level sensitive
-                PINT.isel()
-                    .modify(|w| w.set_pmode(w.pmode() & !(1 << interrupt_number)));
+                pint_reg()
+                    .isel
+                    .modify(|r, w| unsafe { w.bits(r.bits() & !(1 << interrupt_number)) });
 
                 // Enable rising/falling edge detection
                 match edge {
                     Edge::Rising => {
                         // 0 = no-op, 1 = enable rising edge
-                        PINT.sienr().write(|w| w.set_setenrl(1 << interrupt_number));
+                        pint_reg()
+                            .sienr
+                            .write(|w| unsafe { w.setenrl().bits(1 << interrupt_number) });
                         // 0 = no-op, 1 = disable falling edge
-                        PINT.cienf().write(|w| w.set_cenaf(1 << interrupt_number));
+                        pint_reg()
+                            .cienf
+                            .write(|w| unsafe { w.cenaf().bits(1 << interrupt_number) });
                     }
                     Edge::Falling => {
                         // 0 = no-op, 1 = enable falling edge
-                        PINT.sienf().write(|w| w.set_setenaf(1 << interrupt_number));
+                        pint_reg()
+                            .sienf
+                            .write(|w| unsafe { w.setenaf().bits(1 << interrupt_number) });
                         // 0 = no-op, 1 = disable rising edge
-                        PINT.cienr().write(|w| w.set_cenrl(1 << interrupt_number));
+                        pint_reg()
+                            .cienr
+                            .write(|w| unsafe { w.cenrl().bits(1 << interrupt_number) });
                     }
                     Edge::Both => {
                         // 0 = no-op, 1 = enable
-                        PINT.sienr().write(|w| w.set_setenrl(1 << interrupt_number));
-                        PINT.sienf().write(|w| w.set_setenaf(1 << interrupt_number));
+                        pint_reg()
+                            .sienr
+                            .write(|w| unsafe { w.setenrl().bits(1 << interrupt_number) });
+                        pint_reg()
+                            .sienf
+                            .write(|w| unsafe { w.setenaf().bits(1 << interrupt_number) });
                     }
                 }
             }
@@ -216,8 +239,12 @@ impl<'d> Drop for InputFuture<'d> {
 
         // Disable pin interrupt
         // 0 = no-op, 1 = disable
-        PINT.cienr().write(|w| w.set_cenrl(1 << interrupt_number));
-        PINT.cienf().write(|w| w.set_cenaf(1 << interrupt_number));
+        pint_reg()
+            .cienr
+            .write(|w| unsafe { w.cenrl().bits(1 << interrupt_number) });
+        pint_reg()
+            .cienf
+            .write(|w| unsafe { w.cenaf().bits(1 << interrupt_number) });
 
         critical_section::with(|cs| {
             let mut pin_interrupts = PIN_INTERRUPTS.borrow(cs).borrow_mut();
@@ -250,8 +277,12 @@ impl<'d> Future for InputFuture<'d> {
 }
 
 fn handle_interrupt(interrupt_number: usize) {
-    PINT.rise().write(|w| w.set_rdet(1 << interrupt_number));
-    PINT.fall().write(|w| w.set_fdet(1 << interrupt_number));
+    pint_reg()
+        .rise
+        .write(|w| unsafe { w.rdet().bits(1 << interrupt_number) });
+    pint_reg()
+        .fall
+        .write(|w| unsafe { w.fdet().bits(1 << interrupt_number) });
 
     critical_section::with(|cs| {
         let mut pin_interrupts = PIN_INTERRUPTS.borrow(cs).borrow_mut();

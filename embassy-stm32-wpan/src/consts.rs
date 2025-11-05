@@ -1,5 +1,5 @@
-use crate::PacketHeader;
 use crate::evt::CsEvt;
+use crate::PacketHeader;
 
 #[derive(Debug)]
 #[repr(C)]

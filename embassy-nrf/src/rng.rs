@@ -56,23 +56,21 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
 /// A wrapper around an nRF RNG peripheral.
 ///
 /// It has a non-blocking API, and a blocking api through `rand`.
-pub struct Rng<'d, M: Mode> {
-    r: pac::rng::Rng,
-    state: &'static State,
-    _phantom: PhantomData<(&'d (), M)>,
+pub struct Rng<'d, T: Instance, M: Mode> {
+    _peri: Peri<'d, T>,
+    _phantom: PhantomData<M>,
 }
 
-impl<'d> Rng<'d, Blocking> {
+impl<'d, T: Instance> Rng<'d, T, Blocking> {
     /// Creates a new RNG driver from the `RNG` peripheral and interrupt.
     ///
     /// SAFETY: The future returned from `fill_bytes` must not have its lifetime end without running its destructor,
     /// e.g. using `mem::forget`.
     ///
     /// The synchronous API is safe.
-    pub fn new_blocking<T: Instance>(_rng: Peri<'d, T>) -> Self {
+    pub fn new_blocking(rng: Peri<'d, T>) -> Self {
         let this = Self {
-            r: T::regs(),
-            state: T::state(),
+            _peri: rng,
             _phantom: PhantomData,
         };
 
@@ -82,20 +80,19 @@ impl<'d> Rng<'d, Blocking> {
     }
 }
 
-impl<'d> Rng<'d, Async> {
+impl<'d, T: Instance> Rng<'d, T, Async> {
     /// Creates a new RNG driver from the `RNG` peripheral and interrupt.
     ///
     /// SAFETY: The future returned from `fill_bytes` must not have its lifetime end without running its destructor,
     /// e.g. using `mem::forget`.
     ///
     /// The synchronous API is safe.
-    pub fn new<T: Instance>(
-        _rng: Peri<'d, T>,
+    pub fn new(
+        rng: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
     ) -> Self {
         let this = Self {
-            r: T::regs(),
-            state: T::state(),
+            _peri: rng,
             _phantom: PhantomData,
         };
 
@@ -109,11 +106,11 @@ impl<'d> Rng<'d, Async> {
     }
 
     fn enable_irq(&self) {
-        self.r.intenset().write(|w| w.set_valrdy(true));
+        T::regs().intenset().write(|w| w.set_valrdy(true));
     }
 
     fn disable_irq(&self) {
-        self.r.intenclr().write(|w| w.set_valrdy(true));
+        T::regs().intenclr().write(|w| w.set_valrdy(true));
     }
 
     /// Fill the buffer with random bytes.
@@ -123,11 +120,10 @@ impl<'d> Rng<'d, Async> {
         }
 
         let range = dest.as_mut_ptr_range();
-        let state = self.state;
         // Even if we've preempted the interrupt, it can't preempt us again,
         // so we don't need to worry about the order we write these in.
         critical_section::with(|cs| {
-            let mut state = state.borrow_mut(cs);
+            let mut state = T::state().borrow_mut(cs);
             state.ptr = range.start;
             state.end = range.end;
         });
@@ -140,7 +136,7 @@ impl<'d> Rng<'d, Async> {
             self.disable_irq();
 
             critical_section::with(|cs| {
-                let mut state = state.borrow_mut(cs);
+                let mut state = T::state().borrow_mut(cs);
                 state.ptr = ptr::null_mut();
                 state.end = ptr::null_mut();
             });
@@ -148,7 +144,7 @@ impl<'d> Rng<'d, Async> {
 
         poll_fn(|cx| {
             critical_section::with(|cs| {
-                let mut s = state.borrow_mut(cs);
+                let mut s = T::state().borrow_mut(cs);
                 s.waker.register(cx.waker());
                 if s.ptr == s.end {
                     // We're done.
@@ -165,13 +161,13 @@ impl<'d> Rng<'d, Async> {
     }
 }
 
-impl<'d, M: Mode> Rng<'d, M> {
+impl<'d, T: Instance, M: Mode> Rng<'d, T, M> {
     fn stop(&self) {
-        self.r.tasks_stop().write_value(1)
+        T::regs().tasks_stop().write_value(1)
     }
 
     fn start(&self) {
-        self.r.tasks_start().write_value(1)
+        T::regs().tasks_start().write_value(1)
     }
 
     /// Enable or disable the RNG's bias correction.
@@ -181,7 +177,7 @@ impl<'d, M: Mode> Rng<'d, M> {
     ///
     /// Defaults to disabled.
     pub fn set_bias_correction(&self, enable: bool) {
-        self.r.config().write(|w| w.set_dercen(enable))
+        T::regs().config().write(|w| w.set_dercen(enable))
     }
 
     /// Fill the buffer with random bytes, blocking version.
@@ -189,7 +185,7 @@ impl<'d, M: Mode> Rng<'d, M> {
         self.start();
 
         for byte in dest.iter_mut() {
-            let regs = self.r;
+            let regs = T::regs();
             while regs.events_valrdy().read() == 0 {}
             regs.events_valrdy().write_value(0);
             *byte = regs.value().read().value();
@@ -214,18 +210,18 @@ impl<'d, M: Mode> Rng<'d, M> {
     }
 }
 
-impl<'d, M: Mode> Drop for Rng<'d, M> {
+impl<'d, T: Instance, M: Mode> Drop for Rng<'d, T, M> {
     fn drop(&mut self) {
         self.stop();
         critical_section::with(|cs| {
-            let mut state = self.state.borrow_mut(cs);
+            let mut state = T::state().borrow_mut(cs);
             state.ptr = ptr::null_mut();
             state.end = ptr::null_mut();
         });
     }
 }
 
-impl<'d, M: Mode> rand_core_06::RngCore for Rng<'d, M> {
+impl<'d, T: Instance, M: Mode> rand_core_06::RngCore for Rng<'d, T, M> {
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         self.blocking_fill_bytes(dest);
     }
@@ -241,9 +237,9 @@ impl<'d, M: Mode> rand_core_06::RngCore for Rng<'d, M> {
     }
 }
 
-impl<'d, M: Mode> rand_core_06::CryptoRng for Rng<'d, M> {}
+impl<'d, T: Instance, M: Mode> rand_core_06::CryptoRng for Rng<'d, T, M> {}
 
-impl<'d, M: Mode> rand_core_09::RngCore for Rng<'d, M> {
+impl<'d, T: Instance, M: Mode> rand_core_09::RngCore for Rng<'d, T, M> {
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         self.blocking_fill_bytes(dest);
     }
@@ -255,7 +251,7 @@ impl<'d, M: Mode> rand_core_09::RngCore for Rng<'d, M> {
     }
 }
 
-impl<'d, M: Mode> rand_core_09::CryptoRng for Rng<'d, M> {}
+impl<'d, T: Instance, M: Mode> rand_core_09::CryptoRng for Rng<'d, T, M> {}
 
 /// Peripheral static state
 pub(crate) struct State {

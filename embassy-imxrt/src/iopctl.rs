@@ -2,7 +2,7 @@
 //!
 //! Also known as IO Pin Configuration (IOCON)
 
-use crate::pac::{Iopctl, iopctl};
+use crate::pac::{iopctl, Iopctl};
 
 // A generic pin of any type.
 //

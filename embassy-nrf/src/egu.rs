@@ -10,29 +10,24 @@ use core::marker::PhantomData;
 use embassy_hal_internal::PeripheralType;
 
 use crate::ppi::{Event, Task};
-use crate::{Peri, interrupt, pac};
+use crate::{interrupt, pac, Peri};
 
 /// An instance of the EGU.
-pub struct Egu<'d> {
-    r: pac::egu::Egu,
-    _phantom: PhantomData<&'d ()>,
+pub struct Egu<'d, T: Instance> {
+    _p: Peri<'d, T>,
 }
 
-impl<'d> Egu<'d> {
+impl<'d, T: Instance> Egu<'d, T> {
     /// Create a new EGU instance.
-    pub fn new<T: Instance>(_p: Peri<'d, T>) -> Self {
-        Self {
-            r: T::regs(),
-            _phantom: PhantomData,
-        }
+    pub fn new(_p: Peri<'d, T>) -> Self {
+        Self { _p }
     }
 
     /// Get a handle to a trigger for the EGU.
-    pub fn trigger(&mut self, number: TriggerNumber) -> Trigger<'d> {
+    pub fn trigger(&mut self, number: TriggerNumber) -> Trigger<'d, T> {
         Trigger {
             number,
-            r: self.r,
-            _phantom: PhantomData,
+            _p: PhantomData,
         }
     }
 }
@@ -62,37 +57,36 @@ macro_rules! impl_egu {
 }
 
 /// Represents a trigger within the EGU.
-pub struct Trigger<'d> {
+pub struct Trigger<'d, T: Instance> {
     number: TriggerNumber,
-    r: pac::egu::Egu,
-    _phantom: PhantomData<&'d ()>,
+    _p: PhantomData<&'d T>,
 }
 
-impl<'d> Trigger<'d> {
+impl<'d, T: Instance> Trigger<'d, T> {
     /// Get task for this trigger to use with PPI.
     pub fn task(&self) -> Task<'d> {
         let nr = self.number as usize;
-        Task::from_reg(self.r.tasks_trigger(nr))
+        let regs = T::regs();
+        Task::from_reg(regs.tasks_trigger(nr))
     }
 
     /// Get event for this trigger to use with PPI.
     pub fn event(&self) -> Event<'d> {
         let nr = self.number as usize;
-        Event::from_reg(self.r.events_triggered(nr))
+        let regs = T::regs();
+        Event::from_reg(regs.events_triggered(nr))
     }
 
     /// Enable interrupts for this trigger
     pub fn enable_interrupt(&mut self) {
-        self.r
-            .intenset()
-            .modify(|w| w.set_triggered(self.number as usize, true));
+        let regs = T::regs();
+        regs.intenset().modify(|w| w.set_triggered(self.number as usize, true));
     }
 
     /// Enable interrupts for this trigger
     pub fn disable_interrupt(&mut self) {
-        self.r
-            .intenset()
-            .modify(|w| w.set_triggered(self.number as usize, false));
+        let regs = T::regs();
+        regs.intenset().modify(|w| w.set_triggered(self.number as usize, false));
     }
 }
 

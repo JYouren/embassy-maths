@@ -1,5 +1,3 @@
-use core::future::Future;
-
 use super::{Duration, Instant};
 use crate::Timer;
 
@@ -34,16 +32,16 @@ impl embedded_hal_1::delay::DelayNs for Delay {
 }
 
 impl embedded_hal_async::delay::DelayNs for Delay {
-    fn delay_ns(&mut self, ns: u32) -> impl Future<Output = ()> {
-        Timer::after_nanos(ns as _)
+    async fn delay_ns(&mut self, ns: u32) {
+        Timer::after_nanos(ns as _).await
     }
 
-    fn delay_us(&mut self, us: u32) -> impl Future<Output = ()> {
-        Timer::after_micros(us as _)
+    async fn delay_us(&mut self, us: u32) {
+        Timer::after_micros(us as _).await
     }
 
-    fn delay_ms(&mut self, ms: u32) -> impl Future<Output = ()> {
-        Timer::after_millis(ms as _)
+    async fn delay_ms(&mut self, ms: u32) {
+        Timer::after_millis(ms as _).await
     }
 }
 

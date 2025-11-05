@@ -5,11 +5,11 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::can::frame::Envelope;
 use embassy_stm32::can::{
-    Can, Fifo, Frame, Id, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, StandardId,
-    TxInterruptHandler, filter,
+    filter, Can, Fifo, Frame, Id, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, StandardId,
+    TxInterruptHandler,
 };
 use embassy_stm32::peripherals::CAN;
-use embassy_stm32::{Config, bind_interrupts};
+use embassy_stm32::{bind_interrupts, Config};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 

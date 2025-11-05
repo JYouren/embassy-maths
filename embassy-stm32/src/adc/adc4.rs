@@ -4,7 +4,7 @@ use pac::adc::vals::{Adc4Dmacfg as Dmacfg, Adc4Exten as Exten, Adc4OversamplingR
 #[cfg(stm32wba)]
 use pac::adc::vals::{Chselrmod, Cont, Dmacfg, Exten, OversamplingRatio, Ovss, Smpsel};
 
-use super::{AdcChannel, AnyAdcChannel, RxDma4, SealedAdcChannel, blocking_delay_us};
+use super::{blocking_delay_us, AdcChannel, AnyAdcChannel, RxDma4, SealedAdcChannel};
 use crate::dma::Transfer;
 #[cfg(stm32u5)]
 pub use crate::pac::adc::regs::Adc4Chselrmod0 as Chselr;
@@ -15,7 +15,7 @@ pub use crate::pac::adc::vals::{Adc4Presc as Presc, Adc4Res as Resolution, Adc4S
 #[cfg(stm32wba)]
 pub use crate::pac::adc::vals::{Presc, Res as Resolution, SampleTime};
 use crate::time::Hertz;
-use crate::{Peri, pac, rcc};
+use crate::{pac, rcc, Peri};
 
 const MAX_ADC_CLK_FREQ: Hertz = Hertz::mhz(55);
 
@@ -83,8 +83,7 @@ pub enum DacChannel {
 }
 
 /// Number of samples used for averaging.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone)]
 pub enum Averaging {
     Disabled,
     Samples2,
@@ -208,10 +207,7 @@ impl<'d, T: Instance> Adc4<'d, T> {
         info!("ADC4 frequency set to {}", frequency);
 
         if frequency > MAX_ADC_CLK_FREQ {
-            panic!(
-                "Maximal allowed frequency for ADC4 is {} MHz and it varies with different packages, refer to ST docs for more information.",
-                MAX_ADC_CLK_FREQ.0 / 1_000_000
-            );
+            panic!("Maximal allowed frequency for ADC4 is {} MHz and it varies with different packages, refer to ST docs for more information.", MAX_ADC_CLK_FREQ.0 /  1_000_000 );
         }
 
         let mut s = Self { adc };

@@ -1,6 +1,6 @@
 //! Raw sockets.
 
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::mem;
 use core::task::{Context, Poll};
 

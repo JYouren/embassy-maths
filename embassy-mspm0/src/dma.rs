@@ -5,18 +5,18 @@
 use core::future::Future;
 use core::mem;
 use core::pin::Pin;
-use core::sync::atomic::{Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, Ordering};
 use core::task::{Context, Poll};
 
 use critical_section::CriticalSection;
 use embassy_hal_internal::interrupt::InterruptExt;
-use embassy_hal_internal::{PeripheralType, impl_peripheral};
+use embassy_hal_internal::{impl_peripheral, PeripheralType};
 use embassy_sync::waitqueue::AtomicWaker;
-use mspm0_metapac::common::{RW, Reg};
+use mspm0_metapac::common::{Reg, RW};
 use mspm0_metapac::dma::regs;
 use mspm0_metapac::dma::vals::{self, Autoen, Em, Incr, Preirq, Wdth};
 
-use crate::{Peri, interrupt, pac};
+use crate::{interrupt, pac, Peri};
 
 /// The burst size of a DMA transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

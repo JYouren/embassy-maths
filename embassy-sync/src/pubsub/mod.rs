@@ -10,8 +10,8 @@ use heapless::Deque;
 
 use self::publisher::{ImmediatePub, Pub};
 use self::subscriber::Sub;
-use crate::blocking_mutex::Mutex;
 use crate::blocking_mutex::raw::RawMutex;
+use crate::blocking_mutex::Mutex;
 use crate::waitqueue::MultiWakerRegistration;
 
 pub mod publisher;
@@ -71,7 +71,6 @@ pub use subscriber::{DynSubscriber, Subscriber};
 /// # block_on(test);
 /// ```
 ///
-#[derive(Debug)]
 pub struct PubSubChannel<M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usize> {
     inner: Mutex<M, RefCell<PubSubState<T, CAP, SUBS, PUBS>>>,
 }
@@ -298,7 +297,6 @@ impl<M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usi
 }
 
 /// Internal state for the PubSub channel
-#[derive(Debug)]
 struct PubSubState<T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usize> {
     /// The queue contains the last messages that have been published and a countdown of how many subscribers are yet to read it
     queue: Deque<(T, usize), CAP>,

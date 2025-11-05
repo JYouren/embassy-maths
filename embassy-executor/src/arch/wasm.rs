@@ -13,9 +13,9 @@ mod thread {
     use wasm_bindgen::prelude::*;
 
     use crate::raw::util::UninitCell;
-    use crate::{Spawner, raw};
+    use crate::{raw, Spawner};
 
-    #[unsafe(export_name = "__pender")]
+    #[export_name = "__pender"]
     fn __pender(context: *mut ()) {
         let signaler: &'static WasmContext = unsafe { std::mem::transmute(context) };
         let _ = signaler.promise.then(unsafe { signaler.closure.as_mut() });

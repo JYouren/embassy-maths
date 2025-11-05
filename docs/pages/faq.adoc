@@ -6,16 +6,16 @@ Please feel free to add items to link:https://github.com/embassy-rs/embassy/edit
 
 == How to deploy to RP2040 or RP235x without a debugging probe.
 
-Install link:https://github.com/raspberrypi/pico-sdk-tools/releases[Picotool] for uploading the binary.
+Install link:https://github.com/JoNil/elf2uf2-rs[elf2uf2-rs] for converting the generated elf binary into a uf2 file.
 
 Configure the runner to use this tool, add this to `.cargo/config.toml`:
 [source,toml]
 ----
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-runner = "picotool load --update --verify --execute -t elf"
+runner = "elf2uf2-rs --deploy --serial --verbose"
 ----
 
-Picotool will detect your device and upload the binary, skipping identical flash sectors (the `--update` command-line flag), verify that the binary was written correctly (`--verify`), and then run your new code (`--execute`). Run `picotool help load` for more information.
+The command-line parameters `--deploy` will detect your device and upload the binary, `--serial` starts a serial connection. See the documentation for more info.
 
 == Missing main macro
 

@@ -5,11 +5,11 @@ use pac::adc::vals::{Adstp, Difsel, Dmngt, Exten, Pcsel};
 use pac::adccommon::vals::Presc;
 
 use super::{
-    Adc, AdcChannel, AnyAdcChannel, Instance, Resolution, RxDma, SampleTime, SealedAdcChannel, blocking_delay_us,
+    blocking_delay_us, Adc, AdcChannel, AnyAdcChannel, Instance, Resolution, RxDma, SampleTime, SealedAdcChannel,
 };
 use crate::dma::Transfer;
 use crate::time::Hertz;
-use crate::{Peri, pac, rcc};
+use crate::{pac, rcc, Peri};
 
 /// Default VREF voltage used for sample conversion to millivolts.
 pub const VREF_DEFAULT_MV: u32 = 3300;
@@ -142,8 +142,7 @@ impl Prescaler {
 }
 
 /// Number of samples used for averaging.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone)]
 pub enum Averaging {
     Disabled,
     Samples2,
@@ -171,10 +170,7 @@ impl<'d, T: Instance> Adc<'d, T> {
         info!("ADC frequency set to {}", frequency);
 
         if frequency > MAX_ADC_CLK_FREQ {
-            panic!(
-                "Maximal allowed frequency for the ADC is {} MHz and it varies with different packages, refer to ST docs for more information.",
-                MAX_ADC_CLK_FREQ.0 / 1_000_000
-            );
+            panic!("Maximal allowed frequency for the ADC is {} MHz and it varies with different packages, refer to ST docs for more information.", MAX_ADC_CLK_FREQ.0 /  1_000_000 );
         }
 
         #[cfg(stm32h7)]

@@ -11,7 +11,7 @@ use embassy_hal_internal::PeripheralType;
 
 use crate::pac::wdt::vals;
 pub use crate::pac::wdt::vals::{Halt as HaltConfig, Sleep as SleepConfig};
-use crate::{Peri, interrupt, pac, peripherals};
+use crate::{interrupt, pac, peripherals, Peri};
 
 const MIN_TICKS: u32 = 15;
 
@@ -37,9 +37,9 @@ impl Config {
     pub fn try_new<T: Instance>(_wdt: &Peri<'_, T>) -> Option<Self> {
         let r = T::REGS;
 
-        #[cfg(not(any(feature = "_nrf91", feature = "_nrf5340", feature = "_nrf54l")))]
+        #[cfg(not(any(feature = "_nrf91", feature = "_nrf5340")))]
         let runstatus = r.runstatus().read().runstatus();
-        #[cfg(any(feature = "_nrf91", feature = "_nrf5340", feature = "_nrf54l"))]
+        #[cfg(any(feature = "_nrf91", feature = "_nrf5340"))]
         let runstatus = r.runstatus().read().runstatuswdt();
 
         if runstatus {
@@ -66,11 +66,11 @@ impl Default for Config {
 }
 
 /// Watchdog driver.
-pub struct Watchdog {
-    r: pac::wdt::Wdt,
+pub struct Watchdog<T: Instance> {
+    _wdt: Peri<'static, T>,
 }
 
-impl Watchdog {
+impl<T: Instance> Watchdog<T> {
     /// Try to create a new watchdog driver.
     ///
     /// This function will return an error if the watchdog is already active
@@ -79,7 +79,7 @@ impl Watchdog {
     ///
     /// `N` must be between 1 and 8, inclusive.
     #[inline]
-    pub fn try_new<T: Instance, const N: usize>(
+    pub fn try_new<const N: usize>(
         wdt: Peri<'static, T>,
         config: Config,
     ) -> Result<(Self, [WatchdogHandle; N]), Peri<'static, T>> {
@@ -90,9 +90,9 @@ impl Watchdog {
         let crv = config.timeout_ticks.max(MIN_TICKS);
         let rren = crate::pac::wdt::regs::Rren((1u32 << N) - 1);
 
-        #[cfg(not(any(feature = "_nrf91", feature = "_nrf5340", feature = "_nrf54l")))]
+        #[cfg(not(any(feature = "_nrf91", feature = "_nrf5340")))]
         let runstatus = r.runstatus().read().runstatus();
-        #[cfg(any(feature = "_nrf91", feature = "_nrf5340", feature = "_nrf54l"))]
+        #[cfg(any(feature = "_nrf91", feature = "_nrf5340"))]
         let runstatus = r.runstatus().read().runstatuswdt();
 
         if runstatus {
@@ -116,7 +116,7 @@ impl Watchdog {
             r.tasks_start().write_value(1);
         }
 
-        let this = Self { r: T::REGS };
+        let this = Self { _wdt: wdt };
 
         let mut handles = [const { WatchdogHandle { index: 0 } }; N];
         for i in 0..N {
@@ -135,7 +135,7 @@ impl Watchdog {
     /// interrupt has been enabled.
     #[inline(always)]
     pub fn enable_interrupt(&mut self) {
-        self.r.intenset().write(|w| w.set_timeout(true));
+        T::REGS.intenset().write(|w| w.set_timeout(true));
     }
 
     /// Disable the watchdog interrupt.
@@ -143,7 +143,7 @@ impl Watchdog {
     /// NOTE: This has no effect on the reset caused by the Watchdog.
     #[inline(always)]
     pub fn disable_interrupt(&mut self) {
-        self.r.intenclr().write(|w| w.set_timeout(true));
+        T::REGS.intenclr().write(|w| w.set_timeout(true));
     }
 
     /// Is the watchdog still awaiting pets from any handle?
@@ -152,8 +152,9 @@ impl Watchdog {
     /// handles to prevent a reset this time period.
     #[inline(always)]
     pub fn awaiting_pets(&self) -> bool {
-        let enabled = self.r.rren().read().0;
-        let status = self.r.reqstatus().read().0;
+        let r = T::REGS;
+        let enabled = r.rren().read().0;
+        let status = r.reqstatus().read().0;
         (status & enabled) == 0
     }
 }

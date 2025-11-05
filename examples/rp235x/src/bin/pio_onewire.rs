@@ -1,5 +1,4 @@
-//! This example shows how you can use PIO to read one or more `DS18B20` one-wire temperature sensors.
-//! This uses externally powered sensors. For parasite power, see the pio_onewire_parasite.rs example.
+//! This example shows how you can use PIO to read a `DS18B20` one-wire temperature sensor.
 
 #![no_std]
 #![no_main]
@@ -7,10 +6,9 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::peripherals::PIO0;
-use embassy_rp::pio::{InterruptHandler, Pio};
-use embassy_rp::pio_programs::onewire::{PioOneWire, PioOneWireProgram, PioOneWireSearch};
+use embassy_rp::pio::{self, InterruptHandler, Pio};
+use embassy_rp::pio_programs::onewire::{PioOneWire, PioOneWireProgram};
 use embassy_time::Timer;
-use heapless::Vec;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -23,66 +21,63 @@ async fn main(_spawner: Spawner) {
     let mut pio = Pio::new(p.PIO0, Irqs);
 
     let prg = PioOneWireProgram::new(&mut pio.common);
-    let mut onewire = PioOneWire::new(&mut pio.common, pio.sm0, p.PIN_2, &prg);
+    let onewire = PioOneWire::new(&mut pio.common, pio.sm0, p.PIN_2, &prg);
 
-    info!("Starting onewire search");
-
-    let mut devices = Vec::<u64, 10>::new();
-    let mut search = PioOneWireSearch::new();
-    for _ in 0..10 {
-        if !search.is_finished() {
-            if let Some(address) = search.next(&mut onewire).await {
-                if crc8(&address.to_le_bytes()) == 0 {
-                    info!("Found addres: {:x}", address);
-                    let _ = devices.push(address);
-                } else {
-                    warn!("Found invalid address: {:x}", address);
-                }
-            }
-        }
-    }
-
-    info!("Search done, found {} devices", devices.len());
+    let mut sensor = Ds18b20::new(onewire);
 
     loop {
-        onewire.reset().await;
-        // Skip rom and trigger conversion, we can trigger all devices on the bus immediately
-        onewire.write_bytes(&[0xCC, 0x44]).await;
-
+        sensor.start().await; // Start a new measurement
         Timer::after_secs(1).await; // Allow 1s for the measurement to finish
-
-        // Read all devices one by one
-        for device in &devices {
-            onewire.reset().await;
-            onewire.write_bytes(&[0x55]).await; // Match rom
-            onewire.write_bytes(&device.to_le_bytes()).await;
-            onewire.write_bytes(&[0xBE]).await; // Read scratchpad
-
-            let mut data = [0; 9];
-            onewire.read_bytes(&mut data).await;
-            if crc8(&data) == 0 {
-                let temp = ((data[1] as i16) << 8 | data[0] as i16) as f32 / 16.;
-                info!("Read device {:x}: {} deg C", device, temp);
-            } else {
-                warn!("Reading device {:x} failed", device);
-            }
+        match sensor.temperature().await {
+            Ok(temp) => info!("temp = {:?} deg C", temp),
+            _ => error!("sensor error"),
         }
         Timer::after_secs(1).await;
     }
 }
 
-fn crc8(data: &[u8]) -> u8 {
-    let mut crc = 0;
-    for b in data {
-        let mut data_byte = *b;
-        for _ in 0..8 {
-            let temp = (crc ^ data_byte) & 0x01;
-            crc >>= 1;
-            if temp != 0 {
-                crc ^= 0x8C;
+/// DS18B20 temperature sensor driver
+pub struct Ds18b20<'d, PIO: pio::Instance, const SM: usize> {
+    wire: PioOneWire<'d, PIO, SM>,
+}
+
+impl<'d, PIO: pio::Instance, const SM: usize> Ds18b20<'d, PIO, SM> {
+    pub fn new(wire: PioOneWire<'d, PIO, SM>) -> Self {
+        Self { wire }
+    }
+
+    /// Calculate CRC8 of the data
+    fn crc8(data: &[u8]) -> u8 {
+        let mut temp;
+        let mut data_byte;
+        let mut crc = 0;
+        for b in data {
+            data_byte = *b;
+            for _ in 0..8 {
+                temp = (crc ^ data_byte) & 0x01;
+                crc >>= 1;
+                if temp != 0 {
+                    crc ^= 0x8C;
+                }
+                data_byte >>= 1;
             }
-            data_byte >>= 1;
+        }
+        crc
+    }
+
+    /// Start a new measurement. Allow at least 1000ms before getting `temperature`.
+    pub async fn start(&mut self) {
+        self.wire.write_bytes(&[0xCC, 0x44]).await;
+    }
+
+    /// Read the temperature. Ensure >1000ms has passed since `start` before calling this.
+    pub async fn temperature(&mut self) -> Result<f32, ()> {
+        self.wire.write_bytes(&[0xCC, 0xBE]).await;
+        let mut data = [0; 9];
+        self.wire.read_bytes(&mut data).await;
+        match Self::crc8(&data) == 0 {
+            true => Ok(((data[1] as u32) << 8 | data[0] as u32) as f32 / 16.),
+            false => Err(()),
         }
     }
-    crc
 }

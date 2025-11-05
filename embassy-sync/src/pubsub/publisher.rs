@@ -10,7 +10,6 @@ use super::{PubSubBehavior, PubSubChannel};
 use crate::blocking_mutex::raw::RawMutex;
 
 /// A publisher to a channel
-#[derive(Debug)]
 pub struct Pub<'a, PSB: PubSubBehavior<T> + ?Sized, T: Clone> {
     /// The channel we are a publisher for
     channel: &'a PSB,
@@ -107,7 +106,6 @@ impl<'a, T: Clone> DerefMut for DynPublisher<'a, T> {
 }
 
 /// A publisher that holds a generic reference to the channel
-#[derive(Debug)]
 pub struct Publisher<'a, M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usize>(
     pub(super) Pub<'a, PubSubChannel<M, T, CAP, SUBS, PUBS>, T>,
 );
@@ -132,7 +130,6 @@ impl<'a, M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS:
 
 /// A publisher that can only use the `publish_immediate` function, but it doesn't have to be registered with the channel.
 /// (So an infinite amount is possible)
-#[derive(Debug)]
 pub struct ImmediatePub<'a, PSB: PubSubBehavior<T> + ?Sized, T: Clone> {
     /// The channel we are a publisher for
     channel: &'a PSB,
@@ -208,7 +205,6 @@ impl<'a, T: Clone> DerefMut for DynImmediatePublisher<'a, T> {
 }
 
 /// An immediate publisher that holds a generic reference to the channel
-#[derive(Debug)]
 pub struct ImmediatePublisher<'a, M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS: usize>(
     pub(super) ImmediatePub<'a, PubSubChannel<M, T, CAP, SUBS, PUBS>, T>,
 );
@@ -233,7 +229,6 @@ impl<'a, M: RawMutex, T: Clone, const CAP: usize, const SUBS: usize, const PUBS:
 
 #[must_use = "Sinks do nothing unless polled"]
 /// [`futures_sink::Sink`] adapter for [`Pub`].
-#[derive(Debug)]
 pub struct PubSink<'a, 'p, PSB, T>
 where
     T: Clone,
@@ -295,7 +290,6 @@ where
 
 /// Future for the publisher wait action
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-#[derive(Debug)]
 pub struct PublisherWaitFuture<'s, 'a, PSB: PubSubBehavior<T> + ?Sized, T: Clone> {
     /// The message we need to publish
     message: Option<T>,

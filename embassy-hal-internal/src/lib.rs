@@ -1,6 +1,5 @@
 #![no_std]
 #![allow(clippy::new_without_default)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 

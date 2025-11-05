@@ -42,7 +42,7 @@ fn main() -> ! {
     // `run` calls the closure then runs the executor forever. It never returns.
     executor.run(|spawner| {
         // Here we get access to a spawner to spawn the initial tasks.
-        spawner.spawn(unwrap!(run1()));
-        spawner.spawn(unwrap!(run2()));
+        unwrap!(spawner.spawn(run1()));
+        unwrap!(spawner.spawn(run2()));
     });
 }

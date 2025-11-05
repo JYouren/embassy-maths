@@ -1,6 +1,6 @@
 //! Trait and implementations for performing VBUS detection.
 
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::Poll;
 
@@ -68,7 +68,7 @@ impl interrupt::typelevel::Handler<UsbRegIrq> for InterruptHandler {
 /// [`VbusDetect`] implementation using the native hardware POWER peripheral.
 ///
 /// Unsuitable for usage with the nRF softdevice, since it reserves exclusive acces
-/// to POWER. In that case, use [SoftwareVbusDetect].
+/// to POWER. In that case, use [`VbusDetectSignal`].
 pub struct HardwareVbusDetect {
     _private: (),
 }

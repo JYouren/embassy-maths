@@ -7,7 +7,7 @@ use embassy_hal_internal::PeripheralType;
 //use crate::gpio::{AnyPin, SealedPin};
 use crate::gpio::{AfType, AnyPin, OutputType, Speed};
 use crate::rcc::{self, RccPeripheral};
-use crate::{Peri, peripherals};
+use crate::{peripherals, Peri};
 
 /// Performs a busy-wait delay for a specified number of microseconds.
 pub fn blocking_delay_ms(ms: u32) {
@@ -78,7 +78,7 @@ impl<'d, T: Instance> DsiHost<'d, T> {
         rcc::enable_and_reset::<T>();
 
         // Set Tearing Enable pin according to CubeMx example
-        set_as_af!(te, AfType::output(OutputType::PushPull, Speed::Low));
+        te.set_as_af(te.af_num(), AfType::output(OutputType::PushPull, Speed::Low));
         /*
                 T::regs().wcr().modify(|w| {
                     w.set_dsien(true);

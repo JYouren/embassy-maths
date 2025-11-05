@@ -16,10 +16,8 @@ use crate::pac::qdec::vals;
 use crate::{interrupt, pac};
 
 /// Quadrature decoder driver.
-pub struct Qdec<'d> {
-    r: pac::qdec::Qdec,
-    state: &'static State,
-    _phantom: PhantomData<&'d ()>,
+pub struct Qdec<'d, T: Instance> {
+    _p: Peri<'d, T>,
 }
 
 /// QDEC config
@@ -61,9 +59,9 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
     }
 }
 
-impl<'d> Qdec<'d> {
+impl<'d, T: Instance> Qdec<'d, T> {
     /// Create a new QDEC.
-    pub fn new<T: Instance>(
+    pub fn new(
         qdec: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         a: Peri<'d, impl GpioPin>,
@@ -74,7 +72,7 @@ impl<'d> Qdec<'d> {
     }
 
     /// Create a new QDEC, with a pin for LED output.
-    pub fn new_with_led<T: Instance>(
+    pub fn new_with_led(
         qdec: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         a: Peri<'d, impl GpioPin>,
@@ -85,8 +83,8 @@ impl<'d> Qdec<'d> {
         Self::new_inner(qdec, a.into(), b.into(), Some(led.into()), config)
     }
 
-    fn new_inner<T: Instance>(
-        _p: Peri<'d, T>,
+    fn new_inner(
+        p: Peri<'d, T>,
         a: Peri<'d, AnyPin>,
         b: Peri<'d, AnyPin>,
         led: Option<Peri<'d, AnyPin>>,
@@ -149,11 +147,7 @@ impl<'d> Qdec<'d> {
         // Start sampling
         r.tasks_start().write_value(1);
 
-        Self {
-            r: T::regs(),
-            state: T::state(),
-            _phantom: PhantomData,
-        }
+        Self { _p: p }
     }
 
     /// Perform an asynchronous read of the decoder.
@@ -179,18 +173,17 @@ impl<'d> Qdec<'d> {
     /// # };
     /// ```
     pub async fn read(&mut self) -> i16 {
-        self.r.intenset().write(|w| w.set_reportrdy(true));
-        self.r.tasks_readclracc().write_value(1);
+        let t = T::regs();
+        t.intenset().write(|w| w.set_reportrdy(true));
+        t.tasks_readclracc().write_value(1);
 
-        let state = self.state;
-        let r = self.r;
-        poll_fn(move |cx| {
-            state.waker.register(cx.waker());
-            if r.events_reportrdy().read() == 0 {
+        poll_fn(|cx| {
+            T::state().waker.register(cx.waker());
+            if t.events_reportrdy().read() == 0 {
                 Poll::Pending
             } else {
-                r.events_reportrdy().write_value(0);
-                let acc = r.accread().read();
+                t.events_reportrdy().write_value(0);
+                let acc = t.accread().read();
                 Poll::Ready(acc as i16)
             }
         })

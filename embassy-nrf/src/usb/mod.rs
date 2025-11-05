@@ -4,10 +4,10 @@
 
 pub mod vbus_detect;
 
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, AtomicU32, Ordering};
 use core::task::Poll;
 
 use cortex_m::peripheral::NVIC;
@@ -86,18 +86,17 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
 }
 
 /// USB driver.
-pub struct Driver<'d, V: VbusDetect> {
-    regs: pac::usbd::Usbd,
+pub struct Driver<'d, T: Instance, V: VbusDetect> {
+    _p: Peri<'d, T>,
     alloc_in: Allocator,
     alloc_out: Allocator,
     vbus_detect: V,
-    _phantom: PhantomData<&'d ()>,
 }
 
-impl<'d, V: VbusDetect> Driver<'d, V> {
+impl<'d, T: Instance, V: VbusDetect> Driver<'d, T, V> {
     /// Create a new USB driver.
-    pub fn new<T: Instance>(
-        _usb: Peri<'d, T>,
+    pub fn new(
+        usb: Peri<'d, T>,
         _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
         vbus_detect: V,
     ) -> Self {
@@ -105,20 +104,19 @@ impl<'d, V: VbusDetect> Driver<'d, V> {
         unsafe { T::Interrupt::enable() };
 
         Self {
-            regs: crate::pac::USBD,
+            _p: usb,
             alloc_in: Allocator::new(),
             alloc_out: Allocator::new(),
             vbus_detect,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<'d, V: VbusDetect + 'd> driver::Driver<'d> for Driver<'d, V> {
-    type EndpointOut = Endpoint<'d, Out>;
-    type EndpointIn = Endpoint<'d, In>;
-    type ControlPipe = ControlPipe<'d>;
-    type Bus = Bus<'d, V>;
+impl<'d, T: Instance, V: VbusDetect + 'd> driver::Driver<'d> for Driver<'d, T, V> {
+    type EndpointOut = Endpoint<'d, T, Out>;
+    type EndpointIn = Endpoint<'d, T, In>;
+    type ControlPipe = ControlPipe<'d, T>;
+    type Bus = Bus<'d, T, V>;
 
     fn alloc_endpoint_in(
         &mut self,
@@ -129,15 +127,12 @@ impl<'d, V: VbusDetect + 'd> driver::Driver<'d> for Driver<'d, V> {
     ) -> Result<Self::EndpointIn, driver::EndpointAllocError> {
         let index = self.alloc_in.allocate(ep_type, ep_addr)?;
         let ep_addr = EndpointAddress::from_parts(index, Direction::In);
-        Ok(Endpoint::new(
-            self.regs,
-            EndpointInfo {
-                addr: ep_addr,
-                ep_type,
-                max_packet_size: packet_size,
-                interval_ms,
-            },
-        ))
+        Ok(Endpoint::new(EndpointInfo {
+            addr: ep_addr,
+            ep_type,
+            max_packet_size: packet_size,
+            interval_ms,
+        }))
     }
 
     fn alloc_endpoint_out(
@@ -149,45 +144,39 @@ impl<'d, V: VbusDetect + 'd> driver::Driver<'d> for Driver<'d, V> {
     ) -> Result<Self::EndpointOut, driver::EndpointAllocError> {
         let index = self.alloc_out.allocate(ep_type, ep_addr)?;
         let ep_addr = EndpointAddress::from_parts(index, Direction::Out);
-        Ok(Endpoint::new(
-            self.regs,
-            EndpointInfo {
-                addr: ep_addr,
-                ep_type,
-                max_packet_size: packet_size,
-                interval_ms,
-            },
-        ))
+        Ok(Endpoint::new(EndpointInfo {
+            addr: ep_addr,
+            ep_type,
+            max_packet_size: packet_size,
+            interval_ms,
+        }))
     }
 
     fn start(self, control_max_packet_size: u16) -> (Self::Bus, Self::ControlPipe) {
         (
             Bus {
-                regs: self.regs,
+                _p: unsafe { self._p.clone_unchecked() },
                 power_available: false,
                 vbus_detect: self.vbus_detect,
-                _phantom: PhantomData,
             },
             ControlPipe {
-                regs: self.regs,
+                _p: self._p,
                 max_packet_size: control_max_packet_size,
-                _phantom: PhantomData,
             },
         )
     }
 }
 
 /// USB bus.
-pub struct Bus<'d, V: VbusDetect> {
-    regs: pac::usbd::Usbd,
+pub struct Bus<'d, T: Instance, V: VbusDetect> {
+    _p: Peri<'d, T>,
     power_available: bool,
     vbus_detect: V,
-    _phantom: PhantomData<&'d ()>,
 }
 
-impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
+impl<'d, T: Instance, V: VbusDetect> driver::Bus for Bus<'d, T, V> {
     async fn enable(&mut self) {
-        let regs = self.regs;
+        let regs = T::regs();
 
         errata::pre_enable();
 
@@ -226,14 +215,14 @@ impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
     }
 
     async fn disable(&mut self) {
-        let regs = self.regs;
+        let regs = T::regs();
         regs.enable().write(|x| x.set_enable(false));
     }
 
     fn poll(&mut self) -> impl Future<Output = Event> {
         poll_fn(|cx| {
             BUS_WAKER.register(cx.waker());
-            let regs = self.regs;
+            let regs = T::regs();
 
             if regs.events_usbreset().read() != 0 {
                 regs.events_usbreset().write_value(0);
@@ -291,7 +280,7 @@ impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
     }
 
     fn endpoint_set_stalled(&mut self, ep_addr: EndpointAddress, stalled: bool) {
-        let regs = self.regs;
+        let regs = T::regs();
         if ep_addr.index() == 0 {
             if stalled {
                 regs.tasks_ep0stall().write_value(1);
@@ -309,7 +298,7 @@ impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
     }
 
     fn endpoint_is_stalled(&mut self, ep_addr: EndpointAddress) -> bool {
-        let regs = self.regs;
+        let regs = T::regs();
         let i = ep_addr.index();
         match ep_addr.direction() {
             Direction::Out => regs.halted().epout(i).read().getstatus() == vals::Getstatus::HALTED,
@@ -318,7 +307,7 @@ impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
     }
 
     fn endpoint_set_enabled(&mut self, ep_addr: EndpointAddress, enabled: bool) {
-        let regs = self.regs;
+        let regs = T::regs();
 
         let i = ep_addr.index();
         let mask = 1 << i;
@@ -330,7 +319,11 @@ impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
                 let mut was_enabled = false;
                 regs.epinen().modify(|w| {
                     was_enabled = (w.0 & mask) != 0;
-                    if enabled { w.0 |= mask } else { w.0 &= !mask }
+                    if enabled {
+                        w.0 |= mask
+                    } else {
+                        w.0 &= !mask
+                    }
                 });
 
                 let ready_mask = In::mask(i);
@@ -366,7 +359,7 @@ impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
 
     #[inline]
     async fn remote_wakeup(&mut self) -> Result<(), Unsupported> {
-        let regs = self.regs;
+        let regs = T::regs();
 
         if regs.lowpower().read().lowpower() == vals::Lowpower::LOW_POWER {
             errata::pre_wakeup();
@@ -375,7 +368,7 @@ impl<'d, V: VbusDetect> driver::Bus for Bus<'d, V> {
 
             poll_fn(|cx| {
                 BUS_WAKER.register(cx.waker());
-                let regs = self.regs;
+                let regs = T::regs();
                 let r = regs.eventcause().read();
 
                 if regs.events_usbreset().read() != 0 {
@@ -448,23 +441,21 @@ impl EndpointDir for Out {
 }
 
 /// USB endpoint.
-pub struct Endpoint<'d, Dir> {
-    regs: pac::usbd::Usbd,
+pub struct Endpoint<'d, T: Instance, Dir> {
+    _phantom: PhantomData<(&'d mut T, Dir)>,
     info: EndpointInfo,
-    _phantom: PhantomData<(&'d (), Dir)>,
 }
 
-impl<'d, Dir> Endpoint<'d, Dir> {
-    fn new(regs: pac::usbd::Usbd, info: EndpointInfo) -> Self {
+impl<'d, T: Instance, Dir> Endpoint<'d, T, Dir> {
+    fn new(info: EndpointInfo) -> Self {
         Self {
-            regs,
             info,
             _phantom: PhantomData,
         }
     }
 }
 
-impl<'d, Dir: EndpointDir> driver::Endpoint for Endpoint<'d, Dir> {
+impl<'d, T: Instance, Dir: EndpointDir> driver::Endpoint for Endpoint<'d, T, Dir> {
     fn info(&self) -> &EndpointInfo {
         &self.info
     }
@@ -475,14 +466,14 @@ impl<'d, Dir: EndpointDir> driver::Endpoint for Endpoint<'d, Dir> {
 }
 
 #[allow(private_bounds)]
-impl<'d, Dir: EndpointDir> Endpoint<'d, Dir> {
-    fn wait_enabled_state(&mut self, state: bool) -> impl Future<Output = ()> + use<'_, 'd, Dir> {
+impl<'d, T: Instance, Dir: EndpointDir> Endpoint<'d, T, Dir> {
+    fn wait_enabled_state(&mut self, state: bool) -> impl Future<Output = ()> {
         let i = self.info.addr.index();
         assert!(i != 0);
 
         poll_fn(move |cx| {
             Dir::waker(i).register(cx.waker());
-            if Dir::is_enabled(self.regs, i) == state {
+            if Dir::is_enabled(T::regs(), i) == state {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -491,12 +482,12 @@ impl<'d, Dir: EndpointDir> Endpoint<'d, Dir> {
     }
 
     /// Wait for the endpoint to be disabled
-    pub fn wait_disabled(&mut self) -> impl Future<Output = ()> + use<'_, 'd, Dir> {
+    pub fn wait_disabled(&mut self) -> impl Future<Output = ()> {
         self.wait_enabled_state(false)
     }
 }
 
-impl<'d, Dir> Endpoint<'d, Dir> {
+impl<'d, T: Instance, Dir> Endpoint<'d, T, Dir> {
     async fn wait_data_ready(&mut self) -> Result<(), ()>
     where
         Dir: EndpointDir,
@@ -506,7 +497,7 @@ impl<'d, Dir> Endpoint<'d, Dir> {
         poll_fn(|cx| {
             Dir::waker(i).register(cx.waker());
             let r = READY_ENDPOINTS.load(Ordering::Acquire);
-            if !Dir::is_enabled(self.regs, i) {
+            if !Dir::is_enabled(T::regs(), i) {
                 Poll::Ready(Err(()))
             } else if r & Dir::mask(i) != 0 {
                 Poll::Ready(Ok(()))
@@ -523,7 +514,9 @@ impl<'d, Dir> Endpoint<'d, Dir> {
     }
 }
 
-unsafe fn read_dma(regs: pac::usbd::Usbd, i: usize, buf: &mut [u8]) -> Result<usize, EndpointError> {
+unsafe fn read_dma<T: Instance>(i: usize, buf: &mut [u8]) -> Result<usize, EndpointError> {
+    let regs = T::regs();
+
     // Check that the packet fits into the buffer
     let size = regs.size().epout(i).read().0 as usize;
     if size > buf.len() {
@@ -546,7 +539,8 @@ unsafe fn read_dma(regs: pac::usbd::Usbd, i: usize, buf: &mut [u8]) -> Result<us
     Ok(size)
 }
 
-unsafe fn write_dma(regs: pac::usbd::Usbd, i: usize, buf: &[u8]) {
+unsafe fn write_dma<T: Instance>(i: usize, buf: &[u8]) {
+    let regs = T::regs();
     assert!(buf.len() <= 64);
 
     let mut ram_buf: MaybeUninit<[u8; 64]> = MaybeUninit::uninit();
@@ -572,44 +566,43 @@ unsafe fn write_dma(regs: pac::usbd::Usbd, i: usize, buf: &[u8]) {
     dma_end();
 }
 
-impl<'d> driver::EndpointOut for Endpoint<'d, Out> {
+impl<'d, T: Instance> driver::EndpointOut for Endpoint<'d, T, Out> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, EndpointError> {
         let i = self.info.addr.index();
         assert!(i != 0);
 
         self.wait_data_ready().await.map_err(|_| EndpointError::Disabled)?;
 
-        unsafe { read_dma(self.regs, i, buf) }
+        unsafe { read_dma::<T>(i, buf) }
     }
 }
 
-impl<'d> driver::EndpointIn for Endpoint<'d, In> {
+impl<'d, T: Instance> driver::EndpointIn for Endpoint<'d, T, In> {
     async fn write(&mut self, buf: &[u8]) -> Result<(), EndpointError> {
         let i = self.info.addr.index();
         assert!(i != 0);
 
         self.wait_data_ready().await.map_err(|_| EndpointError::Disabled)?;
 
-        unsafe { write_dma(self.regs, i, buf) }
+        unsafe { write_dma::<T>(i, buf) }
 
         Ok(())
     }
 }
 
 /// USB control pipe.
-pub struct ControlPipe<'d> {
-    regs: pac::usbd::Usbd,
+pub struct ControlPipe<'d, T: Instance> {
+    _p: Peri<'d, T>,
     max_packet_size: u16,
-    _phantom: PhantomData<&'d ()>,
 }
 
-impl<'d> driver::ControlPipe for ControlPipe<'d> {
+impl<'d, T: Instance> driver::ControlPipe for ControlPipe<'d, T> {
     fn max_packet_size(&self) -> usize {
         usize::from(self.max_packet_size)
     }
 
     async fn setup(&mut self) -> [u8; 8] {
-        let regs = self.regs;
+        let regs = T::regs();
 
         // Reset shorts
         regs.shorts().write(|_| ());
@@ -618,7 +611,7 @@ impl<'d> driver::ControlPipe for ControlPipe<'d> {
         regs.intenset().write(|w| w.set_ep0setup(true));
         poll_fn(|cx| {
             EP0_WAKER.register(cx.waker());
-            let regs = self.regs;
+            let regs = T::regs();
             if regs.events_ep0setup().read() != 0 {
                 Poll::Ready(())
             } else {
@@ -643,7 +636,7 @@ impl<'d> driver::ControlPipe for ControlPipe<'d> {
     }
 
     async fn data_out(&mut self, buf: &mut [u8], _first: bool, _last: bool) -> Result<usize, EndpointError> {
-        let regs = self.regs;
+        let regs = T::regs();
 
         regs.events_ep0datadone().write_value(0);
 
@@ -658,7 +651,7 @@ impl<'d> driver::ControlPipe for ControlPipe<'d> {
         });
         poll_fn(|cx| {
             EP0_WAKER.register(cx.waker());
-            let regs = self.regs;
+            let regs = T::regs();
             if regs.events_ep0datadone().read() != 0 {
                 Poll::Ready(Ok(()))
             } else if regs.events_usbreset().read() != 0 {
@@ -673,17 +666,17 @@ impl<'d> driver::ControlPipe for ControlPipe<'d> {
         })
         .await?;
 
-        unsafe { read_dma(self.regs, 0, buf) }
+        unsafe { read_dma::<T>(0, buf) }
     }
 
     async fn data_in(&mut self, buf: &[u8], _first: bool, last: bool) -> Result<(), EndpointError> {
-        let regs = self.regs;
+        let regs = T::regs();
         regs.events_ep0datadone().write_value(0);
 
         regs.shorts().write(|w| w.set_ep0datadone_ep0status(last));
 
         // This starts a TX on EP0. events_ep0datadone notifies when done.
-        unsafe { write_dma(self.regs, 0, buf) }
+        unsafe { write_dma::<T>(0, buf) }
 
         regs.intenset().write(|w| {
             w.set_usbreset(true);
@@ -694,7 +687,7 @@ impl<'d> driver::ControlPipe for ControlPipe<'d> {
         poll_fn(|cx| {
             cx.waker().wake_by_ref();
             EP0_WAKER.register(cx.waker());
-            let regs = self.regs;
+            let regs = T::regs();
             if regs.events_ep0datadone().read() != 0 {
                 Poll::Ready(Ok(()))
             } else if regs.events_usbreset().read() != 0 {
@@ -711,12 +704,12 @@ impl<'d> driver::ControlPipe for ControlPipe<'d> {
     }
 
     async fn accept(&mut self) {
-        let regs = self.regs;
+        let regs = T::regs();
         regs.tasks_ep0status().write_value(1);
     }
 
     async fn reject(&mut self) {
-        let regs = self.regs;
+        let regs = T::regs();
         regs.tasks_ep0stall().write_value(1);
     }
 
